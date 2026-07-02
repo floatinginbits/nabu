@@ -26,7 +26,7 @@ Before writing code, read `CLAUDE.md` and, if present, `HANDOFF.md` at the repo 
 - Audit logging is a day-one data concern, even where the UI for it isn't built yet
 
 ## Workflow
-- Work on a `feature/`, `fix/`, or `chore/` branch — never commit directly to `main`
+- Work on a `feature/`, `fix/`, or `chore/` branch — never commit directly to `master`
 - Conventional Commits for commit messages
 - Keep changes scoped to one concern per PR
 - Run tests and `go vet`/lint before considering a change done

@@ -22,7 +22,7 @@ Before writing code, read `CLAUDE.md` and, if present, `HANDOFF.md` at the repo 
 - PR/git links render inline from a pasted URL in v1 (title, author, status) — no webhook integration yet, don't build for it prematurely
 
 ## Workflow
-- Work on a `feature/`, `fix/`, or `chore/` branch — never commit directly to `main`
+- Work on a `feature/`, `fix/`, or `chore/` branch — never commit directly to `master`
 - Conventional Commits for commit messages
 - Keep changes scoped to one concern per PR
 - Run lint, type-check, and tests before considering a change done

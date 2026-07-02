@@ -36,5 +36,5 @@ These cover specific areas in more depth than fits here — read the relevant on
 
 ## For agents working in this repo
 - Read HANDOFF.md before making architectural decisions — many open questions have already been resolved there.
-- Never commit directly to `main`; always work on a `feature/`, `fix/`, `chore/`, or `docs/` branch and open a PR.
+- Never commit directly to `master`; always work on a `feature/`, `fix/`, `chore/`, or `docs/` branch and open a PR.
 - If an issue is ambiguous or underspecified, comment asking for clarification instead of guessing.

@@ -15,6 +15,6 @@ Before writing tests, read `CLAUDE.md` and, if present, `HANDOFF.md` at the repo
 - Cover the boundaries that matter here specifically: RBAC role checks (admin/project lead/contributor/viewer), auth token expiry/refresh/revocation, cursor pagination at the edges (empty page, single item, exact page-size boundary), the `NotificationService` no-op default actually being a no-op
 
 ## Workflow
-- Work on a `feature/`, `fix/`, or `chore/` branch — never commit directly to `main`
+- Work on a `feature/`, `fix/`, or `chore/` branch — never commit directly to `master`
 - When diagnosing a failing test, find the root cause before changing the test — don't loosen an assertion just to make it pass
 - Run the full relevant suite (not just the new test) before reporting the work done, to catch regressions
