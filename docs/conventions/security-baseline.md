@@ -23,6 +23,8 @@ Even though v1 is single-org, every query must be scoped by the `project_id`/`or
 ## Dependency hygiene
 Dependabot should be configured for Go modules, npm packages, and Docker base images, weekly and grouped by ecosystem. Treat its security-advisory PRs as high priority — don't let them sit unreviewed behind feature work.
 
+**Copied-in UI components are a Dependabot blind spot.** shadcn/ui component source lives in our repo rather than as a versioned dependency ([ADR-0002](../adr/0002-frontend-styling.md)), so automated advisory tooling doesn't see it. Record which components were pulled and at what upstream version, and periodically review Radix/shadcn advisories by hand, re-pulling components when a security or accessibility fix lands upstream. (Radix itself is a tracked npm dependency and is covered by Dependabot; the vendored wrapper code is not.)
+
 ## Least privilege
 - DB users/service accounts scoped to only the permissions they need (the app's DB role shouldn't have superuser)
 - RBAC checks happen at the service layer for every state-changing action — a hidden button in the UI is not an authorization control

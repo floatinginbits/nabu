@@ -36,9 +36,15 @@ Kanban board, Scrum board, and backlog + milestones all read the same task entit
 Per the product decisions in `ARCHITECTURE.md`: flexibility lives in the data model, not in UI configuration. Default to the sensible behavior; don't add a settings toggle to avoid making a UX decision. If two workflows genuinely need different behavior, that's a data-model question (is this a per-project setting?) before it's a component question.
 
 ## Accessibility baseline
-- Semantic HTML first; ARIA only to fill real gaps
-- Board drag-and-drop must have a keyboard-operable equivalent (e.g. a "move to..." menu), not just pointer drag
+- Semantic HTML first; ARIA only to fill real gaps — for interactive primitives (dialogs, menus, comboboxes) use the shadcn/Radix components rather than hand-rolling ARIA
+- Board drag-and-drop must have a keyboard-operable equivalent (e.g. a "move to..." menu), not just pointer drag — this is the board subsystem's own responsibility (Radix does not cover DnD), so build and test it deliberately
 - Color is never the only signal for status (pair with icon/label) — enterprise users will run this through accessibility audits
 
 ## Styling
-Open decision — see `ARCHITECTURE.md` (Tailwind vs CSS Modules vs shadcn/ui). Don't introduce a styling approach ad hoc; flag it for that decision to be made once, then follow it everywhere.
+shadcn/ui — Tailwind CSS for styling, Radix UI for interactive primitives, with shadcn component source copied into our tree and owned ([ADR-0002](../adr/0002-frontend-styling.md)). Don't introduce a second styling approach ad hoc.
+
+**Scope boundary:** shadcn covers app chrome and forms (dialogs, menus, inputs, toasts, comboboxes). The **task board is a separate, owned subsystem** — drag-and-drop comes from a dedicated library (e.g. `dnd-kit`) and its accessible keyboard interaction is our own pattern, not something shadcn/Radix provides. Don't assume shadcn covers the board.
+
+**Theme tokens:** define colors, spacing, and radii as CSS variables from the start, even for the initial simple UI, so branding and dark mode aren't a later cross-component retrofit.
+
+**Maintaining copied components:** shadcn components live in our repo, so `npm audit`/Dependabot don't cover them. Record which components were pulled and at what upstream version, and watch Radix/shadcn advisories manually (see `security-baseline.md`).

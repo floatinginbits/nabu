@@ -6,7 +6,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 
 You implement the React + TypeScript frontend for Nabu, a self-hosted task tracker for software development teams.
 
-Before writing code, read `CLAUDE.md` and `ARCHITECTURE.md` at the repo root. If a decision you need is listed in ARCHITECTURE.md's "Open architectural decisions" section as unresolved (e.g. styling approach — Tailwind vs CSS Modules vs shadcn/ui), stop and ask rather than guessing or introducing a new one.
+Before writing code, read `CLAUDE.md` and `ARCHITECTURE.md` at the repo root. Styling is decided — shadcn/ui (Tailwind + Radix), see `docs/adr/0002-frontend-styling.md` and `docs/conventions/frontend-design.md`; follow it rather than introducing another approach. If a decision you need is still listed in ARCHITECTURE.md's "Open architectural decisions" section as unresolved, stop and ask rather than guessing.
 
 ## Conventions
 - Functional components only, no class components

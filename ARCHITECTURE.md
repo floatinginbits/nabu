@@ -17,6 +17,7 @@ Nabu is a self-hosted, open-source task tracker for software development teams. 
 |-----------|-----------|-----------|
 | Backend | Go | Single binary, low memory footprint, strong concurrency — ideal for self-hosted deployment |
 | Frontend | React + TypeScript | Proven, large contributor pool, strict TS mode |
+| UI / styling | shadcn/ui (Tailwind + Radix) | Accessible primitives out of the box, owned in-tree, no runtime lock-in — see [ADR-0002](docs/adr/0002-frontend-styling.md) |
 | Build tool | Vite | Fast, minimal config |
 | API style | REST + OpenAPI spec | Simpler than GraphQL for current UI needs; free documentation + generated clients |
 | Database | PostgreSQL | Relational, JSONB for flexible metadata, built-in full-text search for v1 |
@@ -94,7 +95,6 @@ Prometheus and Grafana are opt-in via a Compose profile — not required for a b
 ## Open architectural decisions
 A few choices are deliberately not made yet, tracked here so implementation doesn't settle them by accident:
 
-- **Frontend styling approach** — Tailwind CSS vs CSS Modules vs shadcn/ui
 - **Docker image registry** — GHCR (default assumption, integrates with GitHub Actions) vs Docker Hub
 
-As each is resolved it moves into the sections above (and, where it warrants a record of the reasoning, an ADR under `docs/adr/`). Resolved so far: database access pattern → [ADR-0001](docs/adr/0001-database-access-pattern.md); API field casing → camelCase (see API design above).
+As each is resolved it moves into the sections above (and, where it warrants a record of the reasoning, an ADR under `docs/adr/`). Resolved so far: database access pattern → [ADR-0001](docs/adr/0001-database-access-pattern.md); frontend styling → shadcn/ui ([ADR-0002](docs/adr/0002-frontend-styling.md)); API field casing → camelCase (see API design above).

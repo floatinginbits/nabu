@@ -9,3 +9,4 @@ Each record is `NNNN-short-title.md`, numbered sequentially. Use `0000-template.
 
 ## Index
 - [0001](0001-database-access-pattern.md) — Database access pattern: sqlc + goose — **Accepted**
+- [0002](0002-frontend-styling.md) — Frontend styling: shadcn/ui (Tailwind + Radix) — **Accepted**
