@@ -1,6 +1,6 @@
 # Frontend ↔ Backend Integration
 
-How the two sides of Nabu stay in sync, beyond the baseline API conventions in `HANDOFF.md` (`/api/v1`, error envelope, cursor pagination).
+How the two sides of Nabu stay in sync, beyond the baseline API conventions in `ARCHITECTURE.md` (`/api/v1`, error envelope, cursor pagination).
 
 ## Spec-first workflow
 The OpenAPI spec is the source of truth, not a byproduct of either side's code:

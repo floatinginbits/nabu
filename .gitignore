@@ -30,5 +30,5 @@ dist/
 # Docker
 docker-compose.override.yml
 
-# Handoff / local notes
-HANDOFF.md
+# Local notes
+TASKS.md

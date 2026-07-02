@@ -33,7 +33,7 @@ A component, its test, and its styles are colocated (`TaskCard.tsx`, `TaskCard.t
 Kanban board, Scrum board, and backlog + milestones all read the same task entity — they differ in grouping and filtering, not in shape. Build one set of task primitives (`TaskCard`, `TaskList`, `TaskDetail`) and compose views around them rather than duplicating task rendering per view.
 
 ## Opinionated UI
-Per the product decisions in `HANDOFF.md`: flexibility lives in the data model, not in UI configuration. Default to the sensible behavior; don't add a settings toggle to avoid making a UX decision. If two workflows genuinely need different behavior, that's a data-model question (is this a per-project setting?) before it's a component question.
+Per the product decisions in `ARCHITECTURE.md`: flexibility lives in the data model, not in UI configuration. Default to the sensible behavior; don't add a settings toggle to avoid making a UX decision. If two workflows genuinely need different behavior, that's a data-model question (is this a per-project setting?) before it's a component question.
 
 ## Accessibility baseline
 - Semantic HTML first; ARIA only to fill real gaps
@@ -41,4 +41,4 @@ Per the product decisions in `HANDOFF.md`: flexibility lives in the data model, 
 - Color is never the only signal for status (pair with icon/label) — enterprise users will run this through accessibility audits
 
 ## Styling
-Open decision — see `HANDOFF.md` (Tailwind vs CSS Modules vs shadcn/ui). Don't introduce a styling approach ad hoc; flag it for that decision to be made once, then follow it everywhere.
+Open decision — see `ARCHITECTURE.md` (Tailwind vs CSS Modules vs shadcn/ui). Don't introduce a styling approach ad hoc; flag it for that decision to be made once, then follow it everywhere.

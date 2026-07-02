@@ -1,9 +1,9 @@
 # Git Workflow
 
-Branching and commit conventions for Nabu, expanding on the decisions in `HANDOFF.md`.
+Branching and commit conventions for Nabu.
 
 ## Branching model
-Trunk-based development: `master` is always deployable, all work happens on short-lived branches off `master`, merged back frequently. No long-lived `develop` or per-release branches — a release is just a tag on `master` (see Release Process in `HANDOFF.md`).
+Trunk-based development: `master` is always deployable, all work happens on short-lived branches off `master`, merged back frequently. No long-lived `develop` or per-release branches — a release is just a tag on `master` (see Releases below).
 
 **Branch naming:** `<type>/<short-description>`, where `<type>` is one of:
 - `feature/` — new functionality
@@ -28,7 +28,7 @@ e.g. `feature/task-board-dnd`, `fix/refresh-token-race`. Keep the description sh
 ## Commit and PR title format
 Conventional Commits: `<type>[(scope)]: <description>`
 
-**Types:** `feat`, `fix`, `chore`, `docs`, `refactor` (matches `HANDOFF.md`)
+**Types:** `feat`, `fix`, `chore`, `docs`, `refactor`
 
 **Scope** (optional but encouraged): a backend package name (`internal/task` → `task`) or frontend feature folder (`src/features/board` → `board`). Omit it for changes that don't map to one area (e.g. a repo-wide `chore:`).
 
@@ -50,6 +50,9 @@ Every PR includes:
 - **Linked issue** — `Closes #123` if applicable, so the issue auto-closes on merge
 
 Keep PRs small and scoped to one concern — a PR that mixes a feature with an unrelated refactor is harder to review and harder to revert cleanly.
+
+## Releases
+Semantic versioning (`MAJOR.MINOR.PATCH`). A git tag (e.g. `v0.1.0`) drives a release: test → build Docker image → push to the configured registry → generate a CHANGELOG from Conventional Commits → create the GitHub Release. Since commit messages are already Conventional Commits (squash merge keeps this true on `master`), the changelog step needs no extra bookkeeping.
 
 ## Agent-authored commits
 The subagents in `.claude/agents/` and any local Claude Code session follow this same workflow: work on a properly prefixed branch, Conventional Commits format, never commit directly to `master`. Commits authored with agent assistance get a `Co-Authored-By:` trailer identifying the agent, same as any other tool-assisted commit.

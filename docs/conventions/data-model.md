@@ -1,6 +1,6 @@
 # Data Model Conventions
 
-Domain entity shape and DB conventions for Nabu, beyond the product decisions in `HANDOFF.md`. Treat this as a first draft — it will firm up when the schema is actually implemented.
+Domain entity shape and DB conventions for Nabu, beyond the product decisions in `ARCHITECTURE.md`. Treat this as a first draft — it will firm up when the schema is actually implemented.
 
 ## Task entity (core fields)
 - `id`, `title`, `description`, `status`, `project_id`, `assignee_id` (nullable)

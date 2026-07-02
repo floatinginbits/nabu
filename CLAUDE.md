@@ -1,6 +1,6 @@
 # Nabu
 
-Self-hosted, open-source task tracker for software development teams. Go backend, React + TypeScript frontend. See [README.md](README.md) for the stack overview and [HANDOFF.md](HANDOFF.md) for architecture decisions and rationale.
+Self-hosted, open-source task tracker for software development teams. Go backend, React + TypeScript frontend. See [README.md](README.md) for the stack overview and [ARCHITECTURE.md](ARCHITECTURE.md) for architecture decisions and rationale.
 
 ## Conventions
 
@@ -35,6 +35,6 @@ These cover specific areas in more depth than fits here — read the relevant on
 @docs/conventions/git-workflow.md
 
 ## For agents working in this repo
-- Read HANDOFF.md before making architectural decisions — many open questions have already been resolved there.
+- Read ARCHITECTURE.md before making architectural decisions — check its "Open architectural decisions" section before assuming something is settled.
 - Never commit directly to `master`; always work on a `feature/`, `fix/`, `chore/`, or `docs/` branch and open a PR.
 - If an issue is ambiguous or underspecified, comment asking for clarification instead of guessing.

@@ -21,7 +21,7 @@ Write-time checklist for Nabu — the companion to the `security-reviewer` agent
 Even though v1 is single-org, every query must be scoped by the `project_id`/`org_id` derived from the authenticated session — never trust a client-supplied `project_id` alone as authorization to access that project's data. This is what keeps the RBAC model meaningful and keeps the codebase ready for a future multi-tenant mode without a rewrite.
 
 ## Dependency hygiene
-Dependabot is already configured (`HANDOFF.md`) for Go modules, npm packages, and Docker base images. Treat its security-advisory PRs as high priority — don't let them sit unreviewed behind feature work.
+Dependabot should be configured for Go modules, npm packages, and Docker base images, weekly and grouped by ecosystem. Treat its security-advisory PRs as high priority — don't let them sit unreviewed behind feature work.
 
 ## Least privilege
 - DB users/service accounts scoped to only the permissions they need (the app's DB role shouldn't have superuser)
