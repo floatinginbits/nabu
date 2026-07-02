@@ -46,7 +46,7 @@ One unified task entity underlies Kanban, Scrum, and backlog-plus-milestones —
 - A `links`/`references` field on tasks, populated by pasted PR/issue URLs in v1 and by webhook-driven automation in v2 without a schema change
 - A `NotificationService` interface (Strategy pattern) with a v1 no-op implementation — email, Slack, and webhook notifiers plug in later via the same interface, with no business-logic changes
 
-Full schema-level conventions: `docs/conventions/data-model.md`.
+Persistence uses `sqlc` (raw SQL compiled to type-safe Go) over PostgreSQL, with `goose` for schema migrations — the migration files double as `sqlc`'s schema source. See [ADR-0001](docs/adr/0001-database-access-pattern.md) for the rationale, risks, and mitigations. Full schema-level conventions: `docs/conventions/data-model.md`.
 
 ### Enterprise baseline
 - RBAC at both org level and project level (roles: admin, project lead, contributor, viewer), enforced at the service layer
@@ -93,9 +93,8 @@ Prometheus and Grafana are opt-in via a Compose profile — not required for a b
 ## Open architectural decisions
 A few choices are deliberately not made yet, tracked here so implementation doesn't settle them by accident:
 
-- **Database access pattern in Go** — `sqlc` (generated, compile-time-safe SQL) vs `GORM` (full ORM) vs `sqlx` (thin wrapper over `database/sql`)
 - **Frontend styling approach** — Tailwind CSS vs CSS Modules vs shadcn/ui
 - **JSON field casing** — `camelCase` (natural for the TS client) vs `snake_case` (natural for Go, needs a transform layer)
 - **Docker image registry** — GHCR (default assumption, integrates with GitHub Actions) vs Docker Hub
 
-This section should shrink to nothing as these get resolved and folded into the sections above.
+As each is resolved it moves into the sections above (and, where it warrants a record of the reasoning, an ADR under `docs/adr/`). Resolved so far: database access pattern → [ADR-0001](docs/adr/0001-database-access-pattern.md).

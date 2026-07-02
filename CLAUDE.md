@@ -35,6 +35,6 @@ These cover specific areas in more depth than fits here — read the relevant on
 @docs/conventions/git-workflow.md
 
 ## For agents working in this repo
-- Read ARCHITECTURE.md before making architectural decisions — check its "Open architectural decisions" section before assuming something is settled.
+- Read ARCHITECTURE.md before making architectural decisions — check its "Open architectural decisions" section before assuming something is settled. Significant decisions and their rationale are recorded as ADRs under `docs/adr/`; consult them (and add one) when a choice is worth preserving the reasoning for.
 - Never commit directly to `master`; always work on a `feature/`, `fix/`, `chore/`, or `docs/` branch and open a PR.
 - If an issue is ambiguous or underspecified, comment asking for clarification instead of guessing.
