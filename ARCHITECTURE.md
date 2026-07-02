@@ -64,6 +64,9 @@ Multi-container Compose stack, chosen for ease of self-hosting by small teams wi
 ### Future: Kubernetes
 The stateless app tier and externalized state (Postgres/Redis/Meilisearch) mean the move to Kubernetes is a deployment change, not an application rewrite.
 
+### Image registry
+Release images are published to the GitHub Container Registry (`ghcr.io`). It authenticates through the built-in `GITHUB_TOKEN` in CI with no separate account or secret, and images live alongside the source. It also avoids Docker Hub's pull rate limits, which would otherwise fall on the self-hosters pulling the image — the opposite of what a self-hosted product wants.
+
 ### Container topology
 
 ```
@@ -93,8 +96,11 @@ Prometheus and Grafana are opt-in via a Compose profile — not required for a b
 - `docs/conventions/git-workflow.md` — branching, commits, and merge strategy
 
 ## Open architectural decisions
-A few choices are deliberately not made yet, tracked here so implementation doesn't settle them by accident:
+None outstanding — the initial set of foundational decisions is resolved and folded into the sections above:
 
-- **Docker image registry** — GHCR (default assumption, integrates with GitHub Actions) vs Docker Hub
+- Database access pattern → sqlc + goose ([ADR-0001](docs/adr/0001-database-access-pattern.md))
+- Frontend styling → shadcn/ui, Tailwind + Radix ([ADR-0002](docs/adr/0002-frontend-styling.md))
+- API field casing → camelCase (see API design above)
+- Image registry → GHCR (see Deployment above)
 
-As each is resolved it moves into the sections above (and, where it warrants a record of the reasoning, an ADR under `docs/adr/`). Resolved so far: database access pattern → [ADR-0001](docs/adr/0001-database-access-pattern.md); frontend styling → shadcn/ui ([ADR-0002](docs/adr/0002-frontend-styling.md)); API field casing → camelCase (see API design above).
+New decisions of consequence should be recorded the same way: settle it, fold it into the relevant section here, and add an ADR under `docs/adr/` when the reasoning is worth preserving.

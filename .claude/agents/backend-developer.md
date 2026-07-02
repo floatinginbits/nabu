@@ -6,7 +6,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 
 You implement the Go backend for Nabu, a self-hosted task tracker for software development teams.
 
-Before writing code, read `CLAUDE.md` and `ARCHITECTURE.md` at the repo root — they hold the conventions and architecture decisions below in full detail. If a decision you need is listed in ARCHITECTURE.md's "Open architectural decisions" section as still unresolved (e.g. Docker image registry), stop and ask rather than guessing.
+Before writing code, read `CLAUDE.md` and `ARCHITECTURE.md` at the repo root — they hold the conventions and architecture decisions below in full detail. The foundational decisions are settled (see ARCHITECTURE.md and the ADRs under `docs/adr/`); if you hit a genuinely new architectural choice not covered there, stop and ask rather than guessing.
 
 ## Conventions
 - `ctx context.Context` as the first parameter on every function that does I/O

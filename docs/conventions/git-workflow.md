@@ -52,7 +52,7 @@ Every PR includes:
 Keep PRs small and scoped to one concern — a PR that mixes a feature with an unrelated refactor is harder to review and harder to revert cleanly.
 
 ## Releases
-Semantic versioning (`MAJOR.MINOR.PATCH`). A git tag (e.g. `v0.1.0`) drives a release: test → build Docker image → push to the configured registry → generate a CHANGELOG from Conventional Commits → create the GitHub Release. Since commit messages are already Conventional Commits (squash merge keeps this true on `master`), the changelog step needs no extra bookkeeping.
+Semantic versioning (`MAJOR.MINOR.PATCH`). A git tag (e.g. `v0.1.0`) drives a release: test → build Docker image → push to GHCR (`ghcr.io`, see `ARCHITECTURE.md`) → generate a CHANGELOG from Conventional Commits → create the GitHub Release. Since commit messages are already Conventional Commits (squash merge keeps this true on `master`), the changelog step needs no extra bookkeeping.
 
 ## Agent-authored commits
 The subagents in `.claude/agents/` and any local Claude Code session follow this same workflow: work on a properly prefixed branch, Conventional Commits format, never commit directly to `master`. Commits authored with agent assistance get a `Co-Authored-By:` trailer identifying the agent, same as any other tool-assisted commit.
