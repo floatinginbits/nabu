@@ -40,6 +40,7 @@ The app server holds no session state. Everything that needs to persist — sess
 - Consistent error envelope: `{ "error": { "code": "...", "message": "..." } }` — clients switch on `code`, never parse `message`
 - Cursor-based pagination on list endpoints (not offset) — holds up better on large datasets
 - HTTP status codes used semantically (`201` for creates, `422` for validation errors, etc.)
+- JSON bodies use camelCase (the TypeScript client is the primary consumer); the database stays snake_case, mapped at the DTO layer. See `docs/conventions/api-contract.md`.
 
 ### Data model
 One unified task entity underlies Kanban, Scrum, and backlog-plus-milestones — these are views over the same data (grouping/filtering), not separate schemas. Sprint and story points are optional fields on a task, not a parallel entity. Two extensibility points are built into the schema from day one, specifically to avoid a future migration:
@@ -94,7 +95,6 @@ Prometheus and Grafana are opt-in via a Compose profile — not required for a b
 A few choices are deliberately not made yet, tracked here so implementation doesn't settle them by accident:
 
 - **Frontend styling approach** — Tailwind CSS vs CSS Modules vs shadcn/ui
-- **JSON field casing** — `camelCase` (natural for the TS client) vs `snake_case` (natural for Go, needs a transform layer)
 - **Docker image registry** — GHCR (default assumption, integrates with GitHub Actions) vs Docker Hub
 
-As each is resolved it moves into the sections above (and, where it warrants a record of the reasoning, an ADR under `docs/adr/`). Resolved so far: database access pattern → [ADR-0001](docs/adr/0001-database-access-pattern.md).
+As each is resolved it moves into the sections above (and, where it warrants a record of the reasoning, an ADR under `docs/adr/`). Resolved so far: database access pattern → [ADR-0001](docs/adr/0001-database-access-pattern.md); API field casing → camelCase (see API design above).

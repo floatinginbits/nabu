@@ -21,7 +21,7 @@ Kanban, Scrum, and backlog + milestones are all queries/views over this one tabl
 - Every state-changing service method writes an audit row — this is a cross-cutting concern, not something each feature remembers to add individually
 
 ## Naming conventions
-- `snake_case` for tables and columns (Postgres convention) regardless of the JSON casing decision for the API — that's a serialization-layer transform, not a schema decision
+- `snake_case` for tables and columns (Postgres convention); the API exposes camelCase independently (see `api-contract.md`), mapped at the DTO layer — DB casing is not a wire-format decision
 - Plural table names (`tasks`, `projects`, `audit_logs`)
 - Foreign keys named `<singular_entity>_id` (`project_id`, `assignee_id`)
 

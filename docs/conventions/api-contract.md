@@ -10,6 +10,11 @@ The OpenAPI spec is the source of truth, not a byproduct of either side's code:
 
 Once CI exists, a generation-drift check (regenerate from spec, fail the build on uncommitted diff) should enforce this automatically.
 
+## Field casing
+API request and response bodies use **camelCase** (`storyPoints`, `nextCursor`, `createdAt`). The primary consumer is the TypeScript client, where camelCase is idiomatic and where the generated types carry whatever casing the spec declares.
+
+This is a wire-format choice, independent of the database: Postgres columns stay snake_case (see `data-model.md`) and sqlc-generated structs stay inside the repository (ADR-0001). The API DTO layer that services map to is separate, and its Go structs carry explicit `json:"camelCase"` tags — there is no automatic name derivation and no runtime transform layer, just the tags you write on the DTOs regardless.
+
 ## Error handling
 The envelope is `{ "error": { "code": "...", "message": "..." } }`. The frontend switches on `code` (a stable machine-readable identifier), never parses `message` (human-readable, may change wording). Proposed baseline codes: `VALIDATION_ERROR`, `NOT_FOUND`, `UNAUTHORIZED`, `FORBIDDEN`, `CONFLICT`, `INTERNAL`. New codes are additive; don't repurpose an existing one for a new meaning.
 
@@ -22,7 +27,7 @@ Tokens live in HTTP-only cookies — the frontend never reads or stores them dir
 This retry-once logic belongs in the API client wrapper, not duplicated per call site.
 
 ## Pagination
-List endpoints return `{ data: [...], next_cursor: string | null }`. The frontend treats `next_cursor` as an opaque token — never construct or decode one, just pass it back on the next request.
+List endpoints return `{ data: [...], nextCursor: string | null }`. The frontend treats `nextCursor` as an opaque token — never construct or decode one, just pass it back on the next request.
 
 ## Versioning
 Breaking changes bump the whole API to `/api/v2`, not per-endpoint versioning. Deprecated endpoints get a `Deprecation` response header for at least one release cycle before removal, so integrations (including Nabu's own frontend) have warning.
