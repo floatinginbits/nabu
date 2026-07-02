@@ -44,11 +44,13 @@ Nabu will be available at `http://localhost:3000`.
 
 ## Deployment
 
-Nabu is designed to be deployed as a single organization instance. See the [deployment guide](docs/deployment.md) for:
+Nabu is designed to be deployed as a single organization instance:
 
 - Docker Compose (recommended for small teams)
 - Kubernetes (recommended for larger organizations)
 - Environment variable reference for tuning performance
+
+See [ARCHITECTURE.md](ARCHITECTURE.md#deployment) for the deployment model; a step-by-step operator guide will follow once the stack is scaffolded.
 
 ## Contributing
 
