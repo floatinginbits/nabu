@@ -21,7 +21,7 @@ Maintain this as literal table-driven test cases (role × endpoint → expected 
 Prefer small builder/factory functions (`newTestTask(opts...)`) over static fixture files. Test data should be the minimum needed to exercise what the test asserts — a test with ten irrelevant fields set up is hiding what actually matters.
 
 ## Frontend testing
-Framework not yet chosen — Vitest + React Testing Library is the natural default given the Vite build tool already decided, but this should be confirmed rather than assumed. Test user-visible behavior (what's rendered, what happens on interaction), not implementation details like internal state shape.
+**Vitest + React Testing Library** (confirmed with the M1 scaffold; config lives in `web/vite.config.ts`, jsdom environment). Test user-visible behavior (what's rendered, what happens on interaction), not implementation details like internal state shape.
 
 ## Definition of done
 A change isn't done until: its tests cover the golden path plus at least one failure/edge case, and the full relevant suite (not just the new test) passes locally.

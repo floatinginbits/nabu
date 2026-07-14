@@ -26,7 +26,7 @@ A component, its test, and its styles are colocated (`TaskCard.tsx`, `TaskCard.t
 
 ## State management
 - Local UI state: `useState`/`useReducer`, no global store for anything that doesn't need to be global
-- Server state (tasks, projects, sprints): fetched through the generated API client; recommend a request-caching layer (e.g. TanStack Query) on top of it rather than hand-rolled `useEffect` fetching, so loading/error/refetch states aren't reimplemented per component — **not yet confirmed, treat as a proposal**
+- Server state (tasks, projects, sprints): fetched through the generated API client (`openapi-typescript` + `openapi-fetch`, generated from `api/openapi.yaml` — see `api-contract.md`), with **TanStack Query** (confirmed with the M1 scaffold) as the caching layer on top, so loading/error/refetch states aren't reimplemented per component. Wrapper hooks (`useTasks`, `useCreateTask`, ...) live in `src/api`
 - Truly global client state (current user/session, theme) is the only thing that belongs in app-level context
 
 ## Views over the unified task model
