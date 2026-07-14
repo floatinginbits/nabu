@@ -49,7 +49,7 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-func TestUnknownRoute(t *testing.T) {
+func TestRouting(t *testing.T) {
 	h, _ := newTestHandler(t)
 
 	tests := []struct {
@@ -58,9 +58,13 @@ func TestUnknownRoute(t *testing.T) {
 		path       string
 		wantStatus int
 	}{
-		{"unknown path", http.MethodGet, "/nope", http.StatusNotFound},
+		{"unknown API path gets JSON 404", http.MethodGet, "/api/v1/nope", http.StatusNotFound},
 		{"wrong method on health", http.MethodPost, "/health", http.StatusMethodNotAllowed},
-		{"wrong method on tasks", http.MethodDelete, "/api/v1/tasks", http.StatusMethodNotAllowed},
+		// The all-method /api/ fallback wins over 405 here; see NewHandler.
+		{"wrong method on tasks", http.MethodDelete, "/api/v1/tasks", http.StatusNotFound},
+		// Client-side routes fall back to the SPA's index.html.
+		{"SPA fallback", http.MethodGet, "/some/client/route", http.StatusOK},
+		{"SPA root", http.MethodGet, "/", http.StatusOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,6 +76,19 @@ func TestUnknownRoute(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("API 404 uses the error envelope", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/nope", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		var body api.Error
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decoding body %q: %v", w.Body.String(), err)
+		}
+		if body.Error.Code != "NOT_FOUND" {
+			t.Errorf("error code = %q, want NOT_FOUND", body.Error.Code)
+		}
+	})
 }
 
 func TestWriteError(t *testing.T) {

@@ -21,9 +21,9 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# Node
+# Node (web/.gitignore covers web/dist; internal/web/dist stays tracked —
+# it holds the committed placeholder the Docker build overwrites)
 node_modules/
-dist/
 .next/
 
 # Docker

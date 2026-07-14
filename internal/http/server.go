@@ -9,6 +9,7 @@ import (
 
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/task"
+	"github.com/floatinginbits/nabu/internal/web"
 )
 
 // NewHandler builds the full HTTP handler: the routes generated from the
@@ -16,8 +17,23 @@ import (
 // recovery (see backend-design.md; auth and RBAC join the chain in M2), so
 // logging always captures a request even when a handler panics.
 func NewHandler(log *slog.Logger, tasks *task.Service) http.Handler {
+	mux := http.NewServeMux()
+	// The SPA takes every GET the API doesn't claim ("GET /" rather than "/"
+	// keeps ServeMux's 405-on-wrong-method behavior for non-API routes), and
+	// unknown /api/ paths get the JSON envelope rather than index.html. The
+	// fallback is registered per method (an all-method "/api/" pattern
+	// conflicts with "GET /"), so a wrong method on a real API path reports
+	// 404 instead of 405 — acceptable until an endpoint needs the
+	// distinction.
+	mux.Handle("GET /", web.Handler())
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		mux.HandleFunc(method+" /api/", func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "no such endpoint")
+		})
+	}
+
 	h := api.HandlerWithOptions(&apiServer{log: log, tasks: tasks}, api.StdHTTPServerOptions{
-		BaseRouter: http.NewServeMux(),
+		BaseRouter: mux,
 		// Parameter binding errors (e.g. non-integer pageSize) surface here.
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
