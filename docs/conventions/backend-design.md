@@ -29,6 +29,10 @@ Each domain package (`task`, `auth`, ...) owns its own repository interface and 
 ### Dynamic queries
 `sqlc` handles static queries well but not conditional `WHERE` clauses. For queries with optional filters — chiefly the task-list endpoint (status/assignee/sprint/project + cursor pagination) — prefer `sqlc` nullable params where the Postgres planner tolerates it, and fall back to the `squirrel` query builder only where it does not. Per ADR-0001, if more than roughly a third of queries end up in `squirrel`, that's the signal to reconsider the access pattern rather than keep patching.
 
+**Boundary rule (decided with the M1 prototype).** The filtered task-list query stays in `sqlc`: the nullable-param form (`WHERE ($n IS NULL OR col = $n)` plus a `(created_at, id)` row comparison for the cursor) uses `tasks_created_at_id_idx` on real Postgres, verified by an `EXPLAIN` integration test in `internal/task` that captures the exact SQL the repository executes. A query moves to `squirrel` only when that test (or production profiling) shows the nullable-param form falling back to a sequential scan — not preemptively. Known caveat: the `EXPLAIN` test binds parameter values, so it validates custom plans; if a hot query regresses under generic-plan reuse, pin `plan_cache_mode` for it or move it to `squirrel`, and record which.
+
+`sqlc` parse quirk worth knowing (ADR-0001 risk 2): type overrides for `timestamptz` must be spelled `db_type: "timestamptz"` — the documented `pg_catalog.timestamptz` form doesn't match sqlc's parsed model of our DDL.
+
 ## Dependency injection
 Constructor injection everywhere (`NewTaskService(repo TaskRepository, notifier NotificationService) *TaskService`). No package-level global state, no `init()`-time singletons. Wiring happens once, in `cmd/nabu/main.go`.
 
