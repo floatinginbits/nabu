@@ -17,6 +17,7 @@ import (
 	"github.com/floatinginbits/nabu/internal/config"
 	nabuhttp "github.com/floatinginbits/nabu/internal/http"
 	"github.com/floatinginbits/nabu/internal/store"
+	"github.com/floatinginbits/nabu/internal/task"
 )
 
 func main() {
@@ -41,16 +42,24 @@ func run() error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), time.Minute)
-	defer cancelMigrate()
-	if err := store.Migrate(migrateCtx, cfg.DatabaseURL); err != nil {
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelStartup()
+	if err := store.Migrate(startupCtx, cfg.DatabaseURL); err != nil {
 		return fmt.Errorf("migrating database: %w", err)
 	}
 	log.Info("database migrations applied")
 
+	pool, err := store.NewPool(startupCtx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connecting to database: %w", err)
+	}
+	defer pool.Close()
+
+	tasks := task.NewService(task.NewPostgresRepository(pool))
+
 	srv := &stdhttp.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           nabuhttp.NewHandler(log),
+		Handler:           nabuhttp.NewHandler(log, tasks),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

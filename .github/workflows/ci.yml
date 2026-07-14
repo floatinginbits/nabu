@@ -29,15 +29,21 @@ jobs:
       - name: Build image
         run: docker build .
 
-  # ADR-0001: generated code must never drift from queries.sql/migrations.
-  sqlc:
+  # Generated code must never drift from its source of truth: sqlc from
+  # migrations/queries.sql (ADR-0001), server types from the OpenAPI spec
+  # (api-contract.md).
+  codegen:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: sqlc-dev/setup-sqlc@v4
         with:
           sqlc-version: "1.31.1"
       - run: sqlc generate
+      - run: go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
       - run: git diff --exit-code
 
   # Frontend jobs (lint → type-check → test → build) are added when the
