@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build .
+
+  # sqlc drift check (sqlc generate + fail on diff) is enabled together with
+  # the first migration — ADR-0001 calls it non-negotiable from that point.
+
+  # Frontend jobs (lint → type-check → test → build) are added when the
+  # frontend scaffold lands.
