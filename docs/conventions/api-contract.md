@@ -5,10 +5,10 @@ How the two sides of Nabu stay in sync, beyond the baseline API conventions in `
 ## Spec-first workflow
 The OpenAPI spec is the source of truth, not a byproduct of either side's code:
 1. A change to the API contract starts with editing the OpenAPI spec
-2. Backend types/validation and frontend client are both generated from it (`oapi-codegen` or similar for Go, `openapi-typescript`/`orval` or similar for the TS client — **tooling not yet confirmed**)
+2. Backend types/validation and frontend client are both generated from it — **confirmed tooling**: `oapi-codegen` for the Go server types/routes (pinned as a `tool` directive in `go.mod`, run via `go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml`), `openapi-typescript` + `openapi-fetch` for the TS client
 3. Handwriting request/response types on either side is a sign the spec is out of date, not a shortcut to take
 
-Once CI exists, a generation-drift check (regenerate from spec, fail the build on uncommitted diff) should enforce this automatically.
+The spec lives at `api/openapi.yaml`. CI's `codegen` job enforces the drift check: regenerate from spec, fail the build on any uncommitted diff.
 
 ## Field casing
 API request and response bodies use **camelCase** (`storyPoints`, `nextCursor`, `createdAt`). The primary consumer is the TypeScript client, where camelCase is idiomatic and where the generated types carry whatever casing the spec declares.

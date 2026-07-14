@@ -1,0 +1,155 @@
+openapi: 3.0.3
+info:
+  title: Nabu API
+  description: >
+    Self-hosted task tracker for software development teams. This spec is the
+    source of truth for the API contract: backend server types and the
+    TypeScript client are both generated from it (docs/conventions/api-contract.md).
+  version: 0.1.0
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness check
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /api/v1/tasks:
+    get:
+      operationId: listTasks
+      summary: List tasks, newest first, cursor-paginated
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/TaskStatus"
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor from a previous response's nextCursor.
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          required: false
+          description: Defaults to 50, capped at 100.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: One page of tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskList"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      operationId: createTask
+      summary: Create a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "201":
+          description: The created task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          description: Malformed request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+components:
+  responses:
+    ValidationError:
+      description: Request was well-formed but failed validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    TaskStatus:
+      type: string
+      enum: [todo, in_progress, done]
+
+    Task:
+      type: object
+      required: [id, title, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateTaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+
+    TaskList:
+      type: object
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+        nextCursor:
+          type: string
+          nullable: true
+          description: Opaque; pass back as the cursor query param. Null on the last page.
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable identifier; clients switch on this.
+        message:
+          type: string
+          description: Human-readable; wording may change, never parse it.
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"

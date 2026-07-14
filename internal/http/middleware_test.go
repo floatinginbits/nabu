@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/floatinginbits/nabu/internal/http/api"
 )
 
 // chain builds the same middleware stack as NewHandler around an arbitrary
@@ -63,9 +65,7 @@ func TestRecoveryTurnsPanicInto500(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
-	var body struct {
-		Error errorDetail `json:"error"`
-	}
+	var body api.Error
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decoding body: %v", err)
 	}

@@ -7,12 +7,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/floatinginbits/nabu/internal/http/api"
+	"github.com/floatinginbits/nabu/internal/task"
 )
+
+// stubRepo satisfies task.Repository for tests that never reach the database.
+type stubRepo struct{}
+
+func (stubRepo) Create(context.Context, string) (task.Task, error)          { return task.Task{}, nil }
+func (stubRepo) List(context.Context, task.ListFilter) ([]task.Task, error) { return nil, nil }
 
 func newTestHandler(t *testing.T) (http.Handler, *logRecorder) {
 	t.Helper()
 	rec := &logRecorder{}
-	return NewHandler(slog.New(rec)), rec
+	return NewHandler(slog.New(rec), task.NewService(stubRepo{})), rec
 }
 
 func TestHealth(t *testing.T) {
@@ -51,6 +60,7 @@ func TestUnknownRoute(t *testing.T) {
 	}{
 		{"unknown path", http.MethodGet, "/nope", http.StatusNotFound},
 		{"wrong method on health", http.MethodPost, "/health", http.StatusMethodNotAllowed},
+		{"wrong method on tasks", http.MethodDelete, "/api/v1/tasks", http.StatusMethodNotAllowed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,9 +81,7 @@ func TestWriteError(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnprocessableEntity)
 	}
-	var body struct {
-		Error errorDetail `json:"error"`
-	}
+	var body api.Error
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decoding body: %v", err)
 	}
