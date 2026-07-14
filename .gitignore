@@ -5,7 +5,6 @@ bin/
 
 # Go
 vendor/
-*.sum
 
 # Environment
 .env
