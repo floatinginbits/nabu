@@ -16,6 +16,7 @@ import (
 
 	"github.com/floatinginbits/nabu/internal/config"
 	nabuhttp "github.com/floatinginbits/nabu/internal/http"
+	"github.com/floatinginbits/nabu/internal/store"
 )
 
 func main() {
@@ -39,6 +40,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+
+	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelMigrate()
+	if err := store.Migrate(migrateCtx, cfg.DatabaseURL); err != nil {
+		return fmt.Errorf("migrating database: %w", err)
+	}
+	log.Info("database migrations applied")
 
 	srv := &stdhttp.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

@@ -29,8 +29,16 @@ jobs:
       - name: Build image
         run: docker build .
 
-  # sqlc drift check (sqlc generate + fail on diff) is enabled together with
-  # the first migration — ADR-0001 calls it non-negotiable from that point.
+  # ADR-0001: generated code must never drift from queries.sql/migrations.
+  sqlc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sqlc-dev/setup-sqlc@v4
+        with:
+          sqlc-version: "1.31.1"
+      - run: sqlc generate
+      - run: git diff --exit-code
 
   # Frontend jobs (lint → type-check → test → build) are added when the
   # frontend scaffold lands.
