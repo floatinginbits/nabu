@@ -44,7 +44,32 @@ jobs:
           sqlc-version: "1.31.1"
       - run: sqlc generate
       - run: go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run generate:api
+        working-directory: web
       - run: git diff --exit-code
 
-  # Frontend jobs (lint → type-check → test → build) are added when the
-  # frontend scaffold lands.
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
