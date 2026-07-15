@@ -1,4 +1,4 @@
-FROM node:22-alpine AS webbuild
+FROM node:26-alpine AS webbuild
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
@@ -13,7 +13,7 @@ COPY . .
 COPY --from=webbuild /web/dist ./internal/web/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/nabu ./cmd/nabu
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN adduser -D -H nabu
 USER nabu
 COPY --from=build /out/nabu /usr/local/bin/nabu
