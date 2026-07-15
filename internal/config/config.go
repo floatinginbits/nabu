@@ -14,6 +14,11 @@ type Config struct {
 	Port int
 	// DatabaseURL is the Postgres connection string. DATABASE_URL env var, required.
 	DatabaseURL string
+	// InitialAdminEmail and InitialAdminPassword seed the first account when
+	// the users table is empty. NABU_INITIAL_ADMIN_EMAIL /
+	// NABU_INITIAL_ADMIN_PASSWORD env vars — optional, but set together.
+	InitialAdminEmail    string
+	InitialAdminPassword string
 }
 
 func Load() (*Config, error) {
@@ -30,6 +35,12 @@ func Load() (*Config, error) {
 	cfg.DatabaseURL = os.Getenv("DATABASE_URL")
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+
+	cfg.InitialAdminEmail = os.Getenv("NABU_INITIAL_ADMIN_EMAIL")
+	cfg.InitialAdminPassword = os.Getenv("NABU_INITIAL_ADMIN_PASSWORD")
+	if (cfg.InitialAdminEmail == "") != (cfg.InitialAdminPassword == "") {
+		return nil, fmt.Errorf("NABU_INITIAL_ADMIN_EMAIL and NABU_INITIAL_ADMIN_PASSWORD must be set together")
 	}
 
 	return cfg, nil
