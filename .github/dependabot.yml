@@ -24,6 +24,16 @@ updates:
       docker-images:
         patterns: ["*"]
 
+  # The docker ecosystem scans Dockerfiles only; this covers the images
+  # pinned in docker-compose.yml (e.g. postgres).
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      compose-images:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
