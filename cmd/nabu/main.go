@@ -18,6 +18,7 @@ import (
 	nabuhttp "github.com/floatinginbits/nabu/internal/http"
 	"github.com/floatinginbits/nabu/internal/store"
 	"github.com/floatinginbits/nabu/internal/task"
+	"github.com/floatinginbits/nabu/internal/user"
 )
 
 func main() {
@@ -54,6 +55,17 @@ func run() error {
 		return fmt.Errorf("connecting to database: %w", err)
 	}
 	defer pool.Close()
+
+	users := user.NewService(user.NewPostgresRepository(pool))
+	if cfg.InitialAdminEmail != "" {
+		created, err := users.EnsureInitialAdmin(startupCtx, cfg.InitialAdminEmail, cfg.InitialAdminPassword)
+		if err != nil {
+			return fmt.Errorf("ensuring initial admin: %w", err)
+		}
+		if created {
+			log.Info("initial admin created", slog.String("email", cfg.InitialAdminEmail))
+		}
+	}
 
 	tasks := task.NewService(task.NewPostgresRepository(pool))
 

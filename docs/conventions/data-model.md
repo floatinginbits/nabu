@@ -11,6 +11,12 @@ Domain entity shape and DB conventions for Nabu, beyond the product decisions in
 
 Kanban, Scrum, and backlog + milestones are all queries/views over this one table with different groupings and filters — never fork it into per-workflow tables.
 
+## User entity (implemented, migration 00002)
+- `id`, `email`, `display_name`, `password_hash`, `created_at`, `updated_at`
+- Email uniqueness is case-insensitive, enforced by a unique index on `lower(email)` (no citext extension); the service stores emails lowercased
+- **`password_hash` is `NOT NULL` — a decided constraint, not an accident.** Every v1 user has local credentials, so services never handle a credential-less user. When SSO lands (v2, see ARCHITECTURE.md), relaxing this is a small recorded migration (`DROP NOT NULL` + a provisioning path that skips password validation) — preferred over carrying nullable-password handling through v1 for users that can't exist yet
+- Roles are not columns here — they live in the RBAC assignment tables (below)
+
 ## RBAC
 - Roles: `admin` > `project_lead` > `contributor` > `viewer`, defined at org level with an optional per-project override
 - Enforced at the service layer (see `backend-design.md`), never inferred purely from what the UI shows or hides
