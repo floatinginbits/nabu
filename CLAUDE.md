@@ -24,15 +24,20 @@ Self-hosted, open-source task tracker for software development teams. Go backend
 
 ## Detailed conventions
 
-These cover specific areas in more depth than fits here — read the relevant one before working in that area:
+These cover specific areas in more depth than fits here. The first three apply to
+essentially every change and are always loaded:
 
-@docs/conventions/frontend-design.md
 @docs/conventions/backend-design.md
-@docs/conventions/api-contract.md
-@docs/conventions/testing-strategy.md
-@docs/conventions/data-model.md
-@docs/conventions/security-baseline.md
 @docs/conventions/git-workflow.md
+@docs/conventions/security-baseline.md
+
+The rest are area-specific and are **not** loaded by default — read the ones that
+match what you're touching, before you touch it:
+
+- [frontend-design.md](docs/conventions/frontend-design.md) — any change under `web/`
+- [api-contract.md](docs/conventions/api-contract.md) — editing `api/openapi.yaml`, or any change crossing the frontend/backend boundary
+- [data-model.md](docs/conventions/data-model.md) — new or changed tables, columns, or migrations
+- [testing-strategy.md](docs/conventions/testing-strategy.md) — writing or restructuring tests
 
 ## For agents working in this repo
 - Read ARCHITECTURE.md before making architectural decisions — check its "Open architectural decisions" section before assuming something is settled. Significant decisions and their rationale are recorded as ADRs under `docs/adr/`; consult them (and add one) when a choice is worth preserving the reasoning for.
