@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/config"
 	nabuhttp "github.com/floatinginbits/nabu/internal/http"
 	"github.com/floatinginbits/nabu/internal/store"
@@ -68,10 +69,17 @@ func run() error {
 	}
 
 	tasks := task.NewService(task.NewPostgresRepository(pool))
+	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(pool), []byte(cfg.AuthSecret), log)
 
 	srv := &stdhttp.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           nabuhttp.NewHandler(log, tasks),
+		Addr: fmt.Sprintf(":%d", cfg.Port),
+		Handler: nabuhttp.NewHandler(nabuhttp.Deps{
+			Log:          log,
+			Tasks:        tasks,
+			Auth:         authSvc,
+			Users:        users,
+			CookieSecure: cfg.CookieSecure,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

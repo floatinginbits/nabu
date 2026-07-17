@@ -16,7 +16,7 @@ API request and response bodies use **camelCase** (`storyPoints`, `nextCursor`, 
 This is a wire-format choice, independent of the database: Postgres columns stay snake_case (see `data-model.md`) and sqlc-generated structs stay inside the repository (ADR-0001). The API DTO layer that services map to is separate, and its Go structs carry explicit `json:"camelCase"` tags — there is no automatic name derivation and no runtime transform layer, just the tags you write on the DTOs regardless.
 
 ## Error handling
-The envelope is `{ "error": { "code": "...", "message": "..." } }`. The frontend switches on `code` (a stable machine-readable identifier), never parses `message` (human-readable, may change wording). Proposed baseline codes: `VALIDATION_ERROR`, `NOT_FOUND`, `UNAUTHORIZED`, `FORBIDDEN`, `CONFLICT`, `INTERNAL`. New codes are additive; don't repurpose an existing one for a new meaning.
+The envelope is `{ "error": { "code": "...", "message": "..." } }`. The frontend switches on `code` (a stable machine-readable identifier), never parses `message` (human-readable, may change wording). Proposed baseline codes: `VALIDATION_ERROR`, `NOT_FOUND`, `UNAUTHORIZED`, `FORBIDDEN`, `CONFLICT`, `INTERNAL`, plus `CSRF_REQUIRED` (added with auth: a non-GET `/api` request arrived without the `X-Nabu-Csrf` header — a client-wrapper bug, deliberately distinct from `FORBIDDEN`, which stays reserved for authorization denials). New codes are additive; don't repurpose an existing one for a new meaning.
 
 ## Auth flow (client side)
 Tokens live in HTTP-only cookies — the frontend never reads or stores them directly. On a `401`:

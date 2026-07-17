@@ -7,6 +7,15 @@ services:
       DATABASE_URL: postgres://nabu:nabu@db:5432/nabu?sslmode=disable
       NABU_INITIAL_ADMIN_EMAIL: ${NABU_INITIAL_ADMIN_EMAIL:-}
       NABU_INITIAL_ADMIN_PASSWORD: ${NABU_INITIAL_ADMIN_PASSWORD:-}
+      # No default on purpose: this file is the recommended self-hosting path
+      # (see README), so a committed fallback would be a live signing key that
+      # anyone reading this repo could forge access tokens with. Compose refuses
+      # to start until it is set.
+      NABU_AUTH_SECRET: ${NABU_AUTH_SECRET:?required — generate one with `openssl rand -base64 32`}
+      # Secure-by-default, matching config.Load. Browsers treat http://localhost
+      # as a secure context, so plain-HTTP local development still works; set
+      # this false only to reach the app over plain HTTP off-localhost.
+      NABU_COOKIE_SECURE: ${NABU_COOKIE_SECURE:-true}
     depends_on:
       db:
         condition: service_healthy

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/task"
 )
@@ -18,10 +19,23 @@ type stubRepo struct{}
 func (stubRepo) Create(context.Context, string) (task.Task, error)          { return task.Task{}, nil }
 func (stubRepo) List(context.Context, task.ListFilter) ([]task.Task, error) { return nil, nil }
 
+// newTestHandler builds the production handler with no database behind it.
+// The auth service is real — verifying an access token needs only the signing
+// secret, no repository — so the real middleware chain still runs, and these
+// routing/middleware tests stay fast enough for -short.
 func newTestHandler(t *testing.T) (http.Handler, *logRecorder) {
 	t.Helper()
 	rec := &logRecorder{}
-	return NewHandler(slog.New(rec), task.NewService(stubRepo{})), rec
+	log := slog.New(rec)
+	return NewHandler(Deps{
+		Log:   log,
+		Tasks: task.NewService(stubRepo{}),
+		Auth:  auth.NewService(nil, nil, []byte(testAuthSecret), log),
+		// Users is only reached by GET /users/me, which these tests don't call;
+		// the auth_test.go integration tests cover it against real Postgres.
+		Users:        nil,
+		CookieSecure: false,
+	}), rec
 }
 
 func TestHealth(t *testing.T) {
@@ -49,6 +63,9 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+// TestRouting covers where a request lands, so every API request here carries
+// a valid session and the CSRF header — routing is only observable past the
+// auth and CSRF middleware. Their rejections are middleware_test.go's subject.
 func TestRouting(t *testing.T) {
 	h, _ := newTestHandler(t)
 
@@ -68,19 +85,15 @@ func TestRouting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, req)
+			w := do(h, authedRequest(t, tt.method, tt.path, nil))
 			if w.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+				t.Errorf("status = %d, want %d (body: %s)", w.Code, tt.wantStatus, w.Body.String())
 			}
 		})
 	}
 
 	t.Run("API 404 uses the error envelope", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/nope", nil)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
+		w := do(h, authedRequest(t, http.MethodGet, "/api/v1/nope", nil))
 		var body api.Error
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 			t.Fatalf("decoding body %q: %v", w.Body.String(), err)

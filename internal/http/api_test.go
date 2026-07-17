@@ -10,20 +10,38 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/store"
 	"github.com/floatinginbits/nabu/internal/task"
+	"github.com/floatinginbits/nabu/internal/user"
 )
 
 // Integration tests: the full handler → service → repository chain against
 // real Postgres (testing-strategy.md), no real HTTP server.
 var testPool *pgxpool.Pool
+
+const (
+	// testAuthSecret stands in for NABU_AUTH_SECRET (>= 32 bytes per ADR-0003).
+	testAuthSecret = "test-auth-secret-not-a-real-key-32b"
+
+	testUserEmail       = "tester@nabu.test"
+	testUserDisplayName = "Test User"
+	testUserPassword    = "correct-horse-battery-staple"
+)
+
+// testUserID is the suite's single seeded account. Creating a user costs a
+// bcrypt hash at cost 12 (user package), so the suite seeds one account in
+// TestMain rather than one per test.
+var testUserID uuid.UUID
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -64,11 +82,27 @@ func runWithPostgres(m *testing.M) (int, error) {
 	}
 	defer testPool.Close()
 
+	u, err := user.NewService(user.NewPostgresRepository(testPool)).
+		Create(ctx, testUserEmail, testUserDisplayName, testUserPassword)
+	if err != nil {
+		return 0, fmt.Errorf("seeding test user: %w", err)
+	}
+	testUserID = u.ID
+
 	return m.Run(), nil
 }
 
+// testServer is the production handler plus the services behind it, so a test
+// can mint a real session against the very auth.Service the middleware chain
+// verifies against — auth is exercised, never stubbed out.
+type testServer struct {
+	http.Handler
+	auth *auth.Service
+	log  *logRecorder
+}
+
 // newAPIHandler builds the production handler over a clean tasks table.
-func newAPIHandler(t *testing.T) http.Handler {
+func newAPIHandler(t *testing.T) *testServer {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("integration test; -short set")
@@ -76,18 +110,70 @@ func newAPIHandler(t *testing.T) http.Handler {
 	if _, err := testPool.Exec(context.Background(), "TRUNCATE tasks"); err != nil {
 		t.Fatalf("truncating tasks: %v", err)
 	}
-	svc := task.NewService(task.NewPostgresRepository(testPool))
-	return NewHandler(slog.New(&logRecorder{}), svc)
+	return newTestServer(t, false)
 }
 
-func doJSON(t *testing.T, h http.Handler, method, path, body string) (*httptest.ResponseRecorder, map[string]json.RawMessage) {
+// newTestServer wires the production handler against the test database.
+// cookieSecure mirrors Deps.CookieSecure (NABU_COOKIE_SECURE).
+func newTestServer(t *testing.T, cookieSecure bool) *testServer {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("integration test; -short set")
+	}
+	rec := &logRecorder{}
+	log := slog.New(rec)
+	users := user.NewService(user.NewPostgresRepository(testPool))
+	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(testPool), []byte(testAuthSecret), log)
+	h := NewHandler(Deps{
+		Log:          log,
+		Tasks:        task.NewService(task.NewPostgresRepository(testPool)),
+		Auth:         authSvc,
+		Users:        users,
+		CookieSecure: cookieSecure,
+	})
+	return &testServer{Handler: h, auth: authSvc, log: rec}
+}
+
+var (
+	sessionOnce   sync.Once
+	sessionCookie *http.Cookie
+	sessionErr    error
+)
+
+// testSession returns an access cookie for the seeded user, minted by a real
+// login through a real auth.Service. It is cached for the whole suite: the
+// access token is a stateless JWT signed with testAuthSecret, so it is valid
+// for every handler instance here, and logging in per test would pay bcrypt
+// cost 12 each time.
+func testSession(t *testing.T, authsvc *auth.Service) *http.Cookie {
+	t.Helper()
+	sessionOnce.Do(func() {
+		pair, _, err := authsvc.Login(context.Background(), testUserEmail, testUserPassword)
+		if err != nil {
+			sessionErr = err
+			return
+		}
+		sessionCookie = &http.Cookie{Name: accessCookie, Value: pair.Access}
+	})
+	if sessionErr != nil {
+		t.Fatalf("minting test session: %v", sessionErr)
+	}
+	return sessionCookie
+}
+
+// doJSON sends an authenticated JSON request. /api/v1/tasks is no longer
+// public, so every call carries the session cookie and the CSRF header that
+// the real client wrapper always sends (ADR-0003); tests that exercise auth
+// itself build their own requests instead.
+func doJSON(t *testing.T, ts *testServer, method, path, body string) (*httptest.ResponseRecorder, map[string]json.RawMessage) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	req.AddCookie(testSession(t, ts.auth))
+	req.Header.Set(csrfHeader, "1")
+	w := do(ts, req)
 
 	fields := map[string]json.RawMessage{}
 	if len(w.Body.Bytes()) > 0 {
@@ -96,6 +182,14 @@ func doJSON(t *testing.T, h http.Handler, method, path, body string) (*httptest.
 		}
 	}
 	return w, fields
+}
+
+// do runs one request through the handler with nothing added to it — the
+// building block for tests that control the cookies and headers themselves.
+func do(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
 }
 
 func assertErrorCode(t *testing.T, w *httptest.ResponseRecorder, wantStatus int, wantCode string) {
