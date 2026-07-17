@@ -6,15 +6,20 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/task"
+	"github.com/floatinginbits/nabu/internal/user"
 )
 
 // apiServer implements the generated api.ServerInterface: parse the request,
 // call one service method, translate the result or error. No business logic.
 type apiServer struct {
-	log   *slog.Logger
-	tasks *task.Service
+	log          *slog.Logger
+	tasks        *task.Service
+	auth         *auth.Service
+	users        *user.Service
+	cookieSecure bool
 }
 
 func (s *apiServer) GetHealth(w http.ResponseWriter, _ *http.Request) {

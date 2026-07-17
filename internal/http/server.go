@@ -7,16 +7,28 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/task"
+	"github.com/floatinginbits/nabu/internal/user"
 	"github.com/floatinginbits/nabu/internal/web"
 )
 
+// Deps are the dependencies NewHandler wires into the HTTP layer.
+type Deps struct {
+	Log          *slog.Logger
+	Tasks        *task.Service
+	Auth         *auth.Service
+	Users        *user.Service
+	CookieSecure bool
+}
+
 // NewHandler builds the full HTTP handler: the routes generated from the
 // OpenAPI spec, wrapped in the fixed middleware chain requestID → logging →
-// recovery (see backend-design.md; auth and RBAC join the chain in M2), so
-// logging always captures a request even when a handler panics.
-func NewHandler(log *slog.Logger, tasks *task.Service) http.Handler {
+// recovery → csrf → auth (see backend-design.md), so logging always captures a
+// request even when a handler panics and auth runs after recovery.
+func NewHandler(d Deps) http.Handler {
+	log := d.Log
 	mux := http.NewServeMux()
 	// The SPA takes every GET the API doesn't claim ("GET /" rather than "/"
 	// keeps ServeMux's 405-on-wrong-method behavior for non-API routes), and
@@ -32,13 +44,22 @@ func NewHandler(log *slog.Logger, tasks *task.Service) http.Handler {
 		})
 	}
 
-	h := api.HandlerWithOptions(&apiServer{log: log, tasks: tasks}, api.StdHTTPServerOptions{
+	srv := &apiServer{
+		log:          log,
+		tasks:        d.Tasks,
+		auth:         d.Auth,
+		users:        d.Users,
+		cookieSecure: d.CookieSecure,
+	}
+	h := api.HandlerWithOptions(srv, api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		// Parameter binding errors (e.g. non-integer pageSize) surface here.
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		},
 	})
+	h = requireAuth(d.Auth)(h)
+	h = csrf(h)
 	h = recovery(log)(h)
 	h = logging(log)(h)
 	h = requestID(h)

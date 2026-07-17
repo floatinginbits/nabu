@@ -7,18 +7,33 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/floatinginbits/nabu/internal/auth"
 )
 
 type ctxKey int
 
-const requestIDKey ctxKey = iota
+const (
+	requestIDKey ctxKey = iota
+	userIDKey
+)
 
 // RequestIDFromContext returns the request ID set by the requestID middleware,
 // or "" outside a request.
 func RequestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)
 	return id
+}
+
+// userIDFromContext returns the authenticated user set by requireAuth. The
+// bool is false on public routes, which never run the auth check.
+func userIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	id, ok := ctx.Value(userIDKey).(uuid.UUID)
+	return id, ok
 }
 
 func newRequestID() string {
@@ -63,6 +78,64 @@ func logging(log *slog.Logger) func(http.Handler) http.Handler {
 				slog.Int("status", rec.status),
 				slog.Duration("duration", time.Since(start)),
 			)
+		})
+	}
+}
+
+// isPublic reports whether a request bypasses the access-token check: any
+// non-API route (the SPA and /health) and the auth endpoints that establish or
+// clear a session, none of which can require a valid access token to be usable.
+func isPublic(r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, "/api/") {
+		return true
+	}
+	switch r.URL.Path {
+	case "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout":
+		return true
+	}
+	return false
+}
+
+// csrf rejects state-changing API requests that lack the custom header the
+// client wrapper always sends. A cross-site attacker cannot set a custom header
+// without a preflight we never grant, so this defeats cookie-driven CSRF
+// (ADR-0003). Safe methods and non-API routes are exempt.
+func csrf(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if r.Header.Get(csrfHeader) == "" {
+				// Its own code, not FORBIDDEN: this is a client that failed to
+				// send a header, which RBAC's "you lack permission" 403 will
+				// also carry once it lands. The frontend has to tell a bug in
+				// its own wrapper apart from a real authorization denial.
+				writeError(w, http.StatusForbidden, "CSRF_REQUIRED", "missing "+csrfHeader+" header")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireAuth validates the access-token cookie on protected routes and puts
+// the user ID in the context. Public routes (see isPublic) pass through.
+func requireAuth(authsvc *auth.Service) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isPublic(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			cookie, err := r.Cookie(accessCookie)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+				return
+			}
+			userID, err := authsvc.VerifyAccessToken(cookie.Value)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey, userID)))
 		})
 	}
 }

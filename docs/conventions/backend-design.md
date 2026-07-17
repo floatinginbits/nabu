@@ -53,4 +53,4 @@ Schema evolves through `goose` SQL migration files ([ADR-0001](../adr/0001-datab
 - Jobs must be idempotent — the queue can and will redeliver on worker restart/crash
 
 ## Middleware chain
-Request ID → structured logging (`slog`, includes request ID) → panic recovery → auth (token validation) → RBAC (role check) → handler. Keep this order fixed so logging always captures a request even if auth fails.
+Request ID → structured logging (`slog`, includes request ID) → panic recovery → CSRF (custom-header check, [ADR-0003](../adr/0003-auth-session-design.md)) → auth (token validation) → RBAC (role check) → handler. Keep this order fixed so logging always captures a request even if auth fails. CSRF sits ahead of auth deliberately: a request missing the header is a malformed client, rejectable without touching the session.
