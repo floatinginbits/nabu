@@ -28,10 +28,20 @@ func (s Status) Valid() bool {
 
 type Task struct {
 	ID        uuid.UUID
+	ProjectID uuid.UUID
 	Title     string
 	Status    Status
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// Scope is the tenancy boundary every task query runs inside. OrgID always
+// comes from the session actor, never from the request; ProjectID is an
+// optional client-supplied narrowing within that org, so it can never widen
+// what a caller sees (security-baseline.md).
+type Scope struct {
+	OrgID     uuid.UUID
+	ProjectID *uuid.UUID
 }
 
 // Cursor identifies a position in the (created_at DESC, id DESC) scan order
@@ -45,6 +55,7 @@ type Cursor struct {
 // API-level inputs (opaque cursor string, page-size defaults) into it is the
 // service's job.
 type ListFilter struct {
+	Scope
 	Status *Status
 	After  *Cursor
 	Limit  int
@@ -53,6 +64,6 @@ type ListFilter struct {
 // Repository is the task data-access boundary. The service depends on this
 // interface so it is testable without a database.
 type Repository interface {
-	Create(ctx context.Context, title string) (Task, error)
+	Create(ctx context.Context, projectID uuid.UUID, title string) (Task, error)
 	List(ctx context.Context, f ListFilter) ([]Task, error)
 }

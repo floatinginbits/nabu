@@ -19,16 +19,26 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{q: sqlcgen.New(pool)}
 }
 
-func (r *PostgresRepository) Create(ctx context.Context, title string) (Task, error) {
-	row, err := r.q.CreateTask(ctx, title)
+func (r *PostgresRepository) Create(ctx context.Context, projectID uuid.UUID, title string) (Task, error) {
+	row, err := r.q.CreateTask(ctx, sqlcgen.CreateTaskParams{ProjectID: projectID, Title: title})
 	if err != nil {
 		return Task{}, fmt.Errorf("inserting task: %w", err)
 	}
-	return fromRow(row), nil
+	return Task{
+		ID:        row.ID,
+		ProjectID: row.ProjectID,
+		Title:     row.Title,
+		Status:    Status(row.Status),
+		CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt,
+	}, nil
 }
 
 func (r *PostgresRepository) List(ctx context.Context, f ListFilter) ([]Task, error) {
-	params := sqlcgen.ListTasksParams{PageSize: int32(f.Limit)}
+	params := sqlcgen.ListTasksParams{OrgID: f.OrgID, PageSize: int32(f.Limit)}
+	if f.ProjectID != nil {
+		params.ProjectID = uuid.NullUUID{UUID: *f.ProjectID, Valid: true}
+	}
 	if f.Status != nil {
 		params.Status = sqlcgen.NullTaskStatus{TaskStatus: sqlcgen.TaskStatus(*f.Status), Valid: true}
 	}
@@ -43,17 +53,14 @@ func (r *PostgresRepository) List(ctx context.Context, f ListFilter) ([]Task, er
 	}
 	tasks := make([]Task, len(rows))
 	for i, row := range rows {
-		tasks[i] = fromRow(row)
+		tasks[i] = Task{
+			ID:        row.ID,
+			ProjectID: row.ProjectID,
+			Title:     row.Title,
+			Status:    Status(row.Status),
+			CreatedAt: row.CreatedAt,
+			UpdatedAt: row.UpdatedAt,
+		}
 	}
 	return tasks, nil
-}
-
-func fromRow(row sqlcgen.Task) Task {
-	return Task{
-		ID:        row.ID,
-		Title:     row.Title,
-		Status:    Status(row.Status),
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
-	}
 }
