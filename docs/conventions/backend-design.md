@@ -13,7 +13,7 @@ internal/
   task/           task domain: service + repository interfaces + implementation
   auth/           token issuance/validation, session handling
   rbac/           role definitions and permission checks
-  notification/   NotificationService interface + the v1 no-op implementation
+  audit/          audit.Recorder interface + its Postgres implementation (ADR-0004)
   store/          shared DB access setup (pool, migrations runner)
   config/         env var loading and validation
 ```
@@ -34,7 +34,7 @@ Each domain package (`task`, `auth`, ...) owns its own repository interface and 
 `sqlc` parse quirk worth knowing (ADR-0001 risk 2): type overrides for `timestamptz` must be spelled `db_type: "timestamptz"` — the documented `pg_catalog.timestamptz` form doesn't match sqlc's parsed model of our DDL.
 
 ## Dependency injection
-Constructor injection everywhere (`NewTaskService(repo TaskRepository, notifier NotificationService) *TaskService`). No package-level global state, no `init()`-time singletons. Wiring happens once, in `cmd/nabu/main.go`.
+Constructor injection everywhere (`NewService(repo Repository, projects Projects, recorder audit.Recorder) *Service`). No package-level global state, no `init()`-time singletons. Wiring happens once, in `cmd/nabu/main.go`.
 
 ## Configuration
 - Loaded once at startup from environment variables, validated eagerly — fail fast on missing required config rather than panicking mid-request

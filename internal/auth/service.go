@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/floatinginbits/nabu/internal/audit"
 	"github.com/floatinginbits/nabu/internal/user"
 )
 
@@ -18,19 +19,27 @@ import (
 type Service struct {
 	users   UserAuthenticator
 	refresh RefreshRepository
+	audit   audit.Recorder
 	signing []byte
-	log     *slog.Logger
+	// orgID scopes the audit rows this service writes. Login and logout run
+	// unauthenticated, so there is no actor in the context to read it from; it
+	// comes from the same server-side resolution that stamps every session's
+	// org in requireAuth, never from the request (ADR-0005).
+	orgID uuid.UUID
+	log   *slog.Logger
 	// now is the clock, injectable so token lifetimes are testable.
 	now func() time.Time
 }
 
 // NewService wires the auth service. signingSecret is the HS256 key; callers
 // validate its length at config load (ADR-0003 requires >= 32 bytes).
-func NewService(users UserAuthenticator, refresh RefreshRepository, signingSecret []byte, log *slog.Logger) *Service {
+func NewService(users UserAuthenticator, refresh RefreshRepository, recorder audit.Recorder, signingSecret []byte, orgID uuid.UUID, log *slog.Logger) *Service {
 	return &Service{
 		users:   users,
 		refresh: refresh,
+		audit:   recorder,
 		signing: signingSecret,
+		orgID:   orgID,
 		log:     log,
 		now:     time.Now,
 	}
@@ -43,6 +52,9 @@ func NewService(users UserAuthenticator, refresh RefreshRepository, signingSecre
 func (s *Service) Login(ctx context.Context, email, password string) (TokenPair, user.User, error) {
 	u, err := s.users.Authenticate(ctx, email, password)
 	if errors.Is(err, user.ErrInvalidCredentials) {
+		// Deliberately not audited: /auth/login is reachable unauthenticated and
+		// nothing rate-limits it, so recording failures would hand an anonymous
+		// caller an unbounded append into a table with no retention (ADR-0004).
 		return TokenPair{}, user.User{}, ErrInvalidCredentials
 	}
 	if err != nil {
@@ -62,7 +74,23 @@ func (s *Service) Login(ctx context.Context, email, password string) (TokenPair,
 	if err != nil {
 		return TokenPair{}, user.User{}, err
 	}
+
+	s.audit.Record(ctx, audit.Entry{
+		ActorID:    uuid.NullUUID{UUID: u.ID, Valid: true},
+		OrgID:      s.orgID,
+		Action:     "auth.login",
+		EntityType: "user",
+		EntityID:   u.ID,
+		Metadata:   loginAuditMetadata(u.Email),
+	})
 	return pair, u, nil
+}
+
+// loginAuditMetadata is the auth domain's allowlist. Only the address of the
+// user who just authenticated is recorded — never the submitted address, never
+// the password, never a token or its hash (ADR-0004).
+func loginAuditMetadata(email string) map[string]any {
+	return map[string]any{"email": email}
 }
 
 // Refresh rotates a refresh token: it returns a new pair, detects reuse of an
@@ -103,9 +131,23 @@ func (s *Service) Logout(ctx context.Context, refreshPlaintext string) error {
 	if refreshPlaintext == "" {
 		return nil
 	}
-	if err := s.refresh.RevokeFamilyByHash(ctx, hashToken(refreshPlaintext)); err != nil {
+	userID, err := s.refresh.RevokeFamilyByHash(ctx, hashToken(refreshPlaintext))
+	if err != nil {
 		return fmt.Errorf("revoking session: %w", err)
 	}
+	if !userID.Valid {
+		// Nothing was revoked — an unknown or already-revoked token. Recording
+		// it would put a row with no actor in the trail for every stale cookie
+		// a browser presents.
+		return nil
+	}
+	s.audit.Record(ctx, audit.Entry{
+		ActorID:    userID,
+		OrgID:      s.orgID,
+		Action:     "auth.logout",
+		EntityType: "user",
+		EntityID:   userID.UUID,
+	})
 	return nil
 }
 

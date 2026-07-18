@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/floatinginbits/nabu/internal/actor"
+	"github.com/floatinginbits/nabu/internal/audit"
 	"github.com/floatinginbits/nabu/internal/project"
 )
 
@@ -40,13 +41,18 @@ type Projects interface {
 type Service struct {
 	repo     Repository
 	projects Projects
+	audit    audit.Recorder
 }
 
-func NewService(repo Repository, projects Projects) *Service {
-	return &Service{repo: repo, projects: projects}
+func NewService(repo Repository, projects Projects, recorder audit.Recorder) *Service {
+	return &Service{repo: repo, projects: projects, audit: recorder}
 }
 
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, title string) (Task, error) {
+	a, ok := actor.FromContext(ctx)
+	if !ok {
+		return Task{}, actor.ErrNoActor
+	}
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return Task{}, &ValidationError{Msg: "title is required"}
@@ -65,7 +71,29 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, title string)
 	if err != nil {
 		return Task{}, fmt.Errorf("creating task: %w", err)
 	}
+
+	// After the write, never inside it: the audit trail is best-effort and must
+	// not be able to fail a task that already exists (ADR-0004).
+	s.audit.Record(ctx, audit.Entry{
+		ActorID:    uuid.NullUUID{UUID: a.UserID, Valid: true},
+		OrgID:      a.OrgID,
+		ProjectID:  uuid.NullUUID{UUID: t.ProjectID, Valid: true},
+		Action:     "task.created",
+		EntityType: "task",
+		EntityID:   t.ID,
+		Metadata:   auditMetadata(t),
+	})
 	return t, nil
+}
+
+// auditMetadata is the task domain's allowlist for audit metadata: an explicit
+// field list, never the Task struct itself, so a field added to Task is never
+// persisted here by accident (ADR-0004).
+func auditMetadata(t Task) map[string]any {
+	return map[string]any{
+		"title":  t.Title,
+		"status": string(t.Status),
+	}
 }
 
 type ListParams struct {

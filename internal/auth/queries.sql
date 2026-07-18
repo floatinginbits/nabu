@@ -24,10 +24,15 @@ UPDATE refresh_tokens
 SET revoked_at = now()
 WHERE family_id = $1 AND revoked_at IS NULL;
 
--- name: RevokeRefreshTokenFamilyByHash :exec
+-- name: RevokeRefreshTokenFamilyByHash :many
 -- Logout: revoke the whole family the presented token belongs to. A missing
 -- hash matches no family, so logout is idempotent.
+--
+-- RETURNING user_id identifies the session being ended for the audit trail;
+-- every row in a family shares it. A repeat logout revokes nothing and returns
+-- no rows, which is why the audited actor is nullable.
 UPDATE refresh_tokens
 SET revoked_at = now()
 WHERE family_id = (SELECT rt.family_id FROM refresh_tokens rt WHERE rt.token_hash = $1)
-  AND revoked_at IS NULL;
+  AND revoked_at IS NULL
+RETURNING user_id;

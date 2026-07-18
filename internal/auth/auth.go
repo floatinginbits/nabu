@@ -79,6 +79,8 @@ type RefreshRepository interface {
 	Rotate(ctx context.Context, presentedHash, newHash []byte, newExpiry time.Time, graceWindow time.Duration, now time.Time) (RefreshToken, RotateOutcome, error)
 
 	// RevokeFamilyByHash revokes every live token in the family the presented
-	// token belongs to; a missing hash is a no-op, so logout is idempotent.
-	RevokeFamilyByHash(ctx context.Context, tokenHash []byte) error
+	// token belongs to; a missing hash is a no-op, so logout is idempotent. It
+	// returns the user the family belonged to, for the audit trail — invalid
+	// when nothing was revoked (unknown or already-revoked token).
+	RevokeFamilyByHash(ctx context.Context, tokenHash []byte) (uuid.NullUUID, error)
 }

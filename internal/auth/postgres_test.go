@@ -271,7 +271,7 @@ func TestPostgresRotateInvalid(t *testing.T) {
 			name: "revoked token",
 			presented: func(t *testing.T) []byte {
 				hash, _ := seedFamily(ctx, t, repo, baseTime.Add(refreshTTL))
-				if err := repo.RevokeFamilyByHash(ctx, hash); err != nil {
+				if _, err := repo.RevokeFamilyByHash(ctx, hash); err != nil {
 					t.Fatalf("revoking seeded token: %v", err)
 				}
 				return hash
@@ -571,7 +571,7 @@ func TestPostgresRevokeFamilyByHash(t *testing.T) {
 
 		// Logout presents the current token, so revocation must walk to the
 		// family rather than only revoking the row it matched.
-		if err := repo.RevokeFamilyByHash(ctx, successorHash); err != nil {
+		if _, err := repo.RevokeFamilyByHash(ctx, successorHash); err != nil {
 			t.Fatalf("RevokeFamilyByHash() error: %v", err)
 		}
 		rows := familyRows(ctx, t, presented.FamilyID)
@@ -591,7 +591,7 @@ func TestPostgresRevokeFamilyByHash(t *testing.T) {
 	t.Run("unknown hash is a silent no-op", func(t *testing.T) {
 		_, other := seedFamily(ctx, t, repo, baseTime.Add(refreshTTL))
 
-		if err := repo.RevokeFamilyByHash(ctx, newHash(t)); err != nil {
+		if _, err := repo.RevokeFamilyByHash(ctx, newHash(t)); err != nil {
 			t.Fatalf("RevokeFamilyByHash(unknown) error = %v, want nil (logout is idempotent)", err)
 		}
 		for _, r := range familyRows(ctx, t, other.FamilyID) {
@@ -603,12 +603,12 @@ func TestPostgresRevokeFamilyByHash(t *testing.T) {
 
 	t.Run("repeated logout does not restamp", func(t *testing.T) {
 		hash, seeded := seedFamily(ctx, t, repo, baseTime.Add(refreshTTL))
-		if err := repo.RevokeFamilyByHash(ctx, hash); err != nil {
+		if _, err := repo.RevokeFamilyByHash(ctx, hash); err != nil {
 			t.Fatalf("first RevokeFamilyByHash() error: %v", err)
 		}
 		first := familyRows(ctx, t, seeded.FamilyID)
 
-		if err := repo.RevokeFamilyByHash(ctx, hash); err != nil {
+		if _, err := repo.RevokeFamilyByHash(ctx, hash); err != nil {
 			t.Fatalf("second RevokeFamilyByHash() error = %v, want nil", err)
 		}
 		second := familyRows(ctx, t, seeded.FamilyID)

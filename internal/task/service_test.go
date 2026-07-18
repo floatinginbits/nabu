@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/floatinginbits/nabu/internal/actor"
+	"github.com/floatinginbits/nabu/internal/audit"
+	"github.com/floatinginbits/nabu/internal/audit/audittest"
 	"github.com/floatinginbits/nabu/internal/project"
 )
 
@@ -60,22 +63,29 @@ func (f *fakeProjects) GetByID(ctx context.Context, id uuid.UUID) (project.Proje
 // testScope is the org, project, and actor context a service test runs inside.
 type testScope struct {
 	orgID     uuid.UUID
+	userID    uuid.UUID
 	projectID uuid.UUID
 	ctx       context.Context
 	projects  *fakeProjects
+	// audit is checked against the secret denylist when the test ends, so
+	// every entry any case in this file produces is covered (ADR-0004).
+	audit *audittest.Recorder
 }
 
-func newTestScope() testScope {
-	orgID, projectID := uuid.New(), uuid.New()
+func newTestScope(t *testing.T) testScope {
+	t.Helper()
+	orgID, userID, projectID := uuid.New(), uuid.New(), uuid.New()
 	return testScope{
 		orgID:     orgID,
+		userID:    userID,
 		projectID: projectID,
-		ctx:       actor.NewContext(context.Background(), actor.Actor{UserID: uuid.New(), OrgID: orgID}),
+		ctx:       actor.NewContext(context.Background(), actor.Actor{UserID: userID, OrgID: orgID}),
 		projects:  &fakeProjects{orgID: orgID, known: map[uuid.UUID]bool{projectID: true}},
+		audit:     audittest.New(t),
 	}
 }
 
-func (s testScope) service(repo Repository) *Service { return NewService(repo, s.projects) }
+func (s testScope) service(repo Repository) *Service { return NewService(repo, s.projects, s.audit) }
 
 func newTestTask(createdAt time.Time) Task {
 	return Task{ID: uuid.New(), Title: "t", Status: StatusTodo, CreatedAt: createdAt, UpdatedAt: createdAt}
@@ -84,10 +94,10 @@ func newTestTask(createdAt time.Time) Task {
 // A context with no actor is a wiring bug, not client input: the service must
 // fail rather than fall through to a query scoped to the zero org, which would
 // silently return or write across every org. Asserted once, on both methods,
-// because every other case in this file supplies an actor. Create surfaces it
-// from project resolution, which is what owns the org scope it needs.
+// because every other case in this file supplies an actor. Both methods read
+// actor.FromContext directly, before touching a repository.
 func TestServiceRejectsContextWithoutActor(t *testing.T) {
-	s := newTestScope()
+	s := newTestScope(t)
 	repo := &fakeRepo{}
 	svc := s.service(repo)
 	bare := context.Background()
@@ -127,7 +137,7 @@ func TestServiceCreate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := newTestScope()
+			s := newTestScope(t)
 			repo := &fakeRepo{}
 			got, err := s.service(repo).Create(s.ctx, s.projectID, tt.title)
 			if tt.wantErr {
@@ -150,11 +160,66 @@ func TestServiceCreate(t *testing.T) {
 	}
 }
 
+func TestServiceCreateRecordsAudit(t *testing.T) {
+	s := newTestScope(t)
+	repo := &fakeRepo{}
+
+	created, err := s.service(repo).Create(s.ctx, s.projectID, "Fix the bug")
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	entries := s.audit.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("recorded %d audit entries, want 1", len(entries))
+	}
+	got := entries[0]
+	want := audit.Entry{
+		ActorID:    uuid.NullUUID{UUID: s.userID, Valid: true},
+		OrgID:      s.orgID,
+		ProjectID:  uuid.NullUUID{UUID: s.projectID, Valid: true},
+		Action:     "task.created",
+		EntityType: "task",
+		EntityID:   created.ID,
+		Metadata:   map[string]any{"title": "Fix the bug", "status": string(StatusTodo)},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("audit entry = %+v, want %+v", got, want)
+	}
+}
+
+// Nothing happened, so nothing is audited: an audit row for a rejected write
+// makes the trail describe changes the database never saw.
+func TestServiceCreateDoesNotAuditFailures(t *testing.T) {
+	tests := []struct {
+		name      string
+		projectID func(s testScope) uuid.UUID
+		title     string
+		repoErr   error
+	}{
+		{name: "invalid title", projectID: func(s testScope) uuid.UUID { return s.projectID }, title: "  "},
+		{name: "unknown project", projectID: func(_ testScope) uuid.UUID { return uuid.New() }, title: "a title"},
+		{name: "repository failure", projectID: func(s testScope) uuid.UUID { return s.projectID }, title: "a title", repoErr: errors.New("connection refused")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestScope(t)
+			repo := &fakeRepo{err: tt.repoErr}
+			if _, err := s.service(repo).Create(s.ctx, tt.projectID(s), tt.title); err == nil {
+				t.Fatal("Create() succeeded, want an error")
+			}
+			if n := len(s.audit.Entries()); n != 0 {
+				t.Errorf("recorded %d audit entries for a failed create, want 0", n)
+			}
+		})
+	}
+}
+
 // A projectId is client-supplied, so it is authorization input: a project the
 // actor's org cannot see must be rejected as unknown, and must never reach the
 // repository (security-baseline.md).
 func TestServiceCreateRejectsProjectOutsideTheActorsOrg(t *testing.T) {
-	s := newTestScope()
+	s := newTestScope(t)
 	repo := &fakeRepo{}
 
 	_, err := s.service(repo).Create(s.ctx, uuid.New(), "a title")
@@ -171,7 +236,7 @@ func TestServiceCreateRejectsProjectOutsideTheActorsOrg(t *testing.T) {
 // project filter comes from the caller, so a request can narrow what it sees
 // but never widen it.
 func TestServiceListScope(t *testing.T) {
-	s := newTestScope()
+	s := newTestScope(t)
 
 	t.Run("org comes from the actor", func(t *testing.T) {
 		repo := &fakeRepo{}
@@ -212,7 +277,7 @@ func TestServiceListPageSize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := newTestScope()
+			s := newTestScope(t)
 			repo := &fakeRepo{}
 			if _, err := s.service(repo).List(s.ctx, ListParams{PageSize: tt.pageSize}); err != nil {
 				t.Fatalf("List() error: %v", err)
@@ -236,7 +301,7 @@ func TestServiceListValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := newTestScope()
+			s := newTestScope(t)
 			_, err := s.service(&fakeRepo{}).List(s.ctx, tt.params)
 			var ve *ValidationError
 			if !errors.As(err, &ve) {
@@ -254,7 +319,7 @@ func TestServiceListNextCursor(t *testing.T) {
 	}
 
 	t.Run("more pages", func(t *testing.T) {
-		s := newTestScope()
+		s := newTestScope(t)
 		repo := &fakeRepo{tasks: full}
 		res, err := s.service(repo).List(s.ctx, ListParams{PageSize: 2})
 		if err != nil {
@@ -276,7 +341,7 @@ func TestServiceListNextCursor(t *testing.T) {
 	})
 
 	t.Run("last page", func(t *testing.T) {
-		s := newTestScope()
+		s := newTestScope(t)
 		repo := &fakeRepo{tasks: full[:2]} // exactly pageSize rows, no extra
 		res, err := s.service(repo).List(s.ctx, ListParams{PageSize: 2})
 		if err != nil {
@@ -288,7 +353,7 @@ func TestServiceListNextCursor(t *testing.T) {
 	})
 
 	t.Run("single item", func(t *testing.T) {
-		s := newTestScope()
+		s := newTestScope(t)
 		repo := &fakeRepo{tasks: full[:1]}
 		res, err := s.service(repo).List(s.ctx, ListParams{PageSize: 2})
 		if err != nil {
@@ -300,7 +365,7 @@ func TestServiceListNextCursor(t *testing.T) {
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		s := newTestScope()
+		s := newTestScope(t)
 		res, err := s.service(&fakeRepo{}).List(s.ctx, ListParams{})
 		if err != nil {
 			t.Fatalf("List() error: %v", err)

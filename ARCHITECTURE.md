@@ -44,9 +44,12 @@ The app server holds no session state. Everything that needs to persist — sess
 - JSON bodies use camelCase (the TypeScript client is the primary consumer); the database stays snake_case, mapped at the DTO layer. See `docs/conventions/api-contract.md`.
 
 ### Data model
-One unified task entity underlies Kanban, Scrum, and backlog-plus-milestones — these are views over the same data (grouping/filtering), not separate schemas. Sprint and story points are optional fields on a task, not a parallel entity. Two extensibility points are built into the schema from day one, specifically to avoid a future migration:
+One unified task entity underlies Kanban, Scrum, and backlog-plus-milestones — these are views over the same data (grouping/filtering), not separate schemas. Sprint and story points are optional fields on a task, not a parallel entity. One extensibility point is built into the schema from day one, specifically to avoid a future migration:
 - A `links`/`references` field on tasks, populated by pasted PR/issue URLs in v1 and by webhook-driven automation in v2 without a schema change
-- A `NotificationService` interface (Strategy pattern) with a v1 no-op implementation — email, Slack, and webhook notifiers plug in later via the same interface, with no business-logic changes
+
+**Reversal:** this section previously also promised a `NotificationService` interface (Strategy pattern) with a v1 no-op implementation. It is **cut** — an interface with a do-nothing implementation and no caller is the speculative abstraction `CLAUDE.md` forbids, and unlike a schema column it costs nothing to add once a notifier actually exists. Notifications remain a v2 feature; nothing here forecloses them. Recorded in [ADR-0004](docs/adr/0004-audit-logging.md), which contrasts it with the abstraction that did earn its day-one place.
+
+Audit logging is that abstraction: an `audit.Recorder` written by domain services after a state change, best-effort and non-transactional — an audit failure degrades the trail rather than failing the operation. Metadata is built from per-entity allowlists so credentials can never reach an append-only column. See [ADR-0004](docs/adr/0004-audit-logging.md).
 
 Tasks live in projects, and projects belong to an organization. v1 behaves as single-org — the `organizations` table holds exactly one row, enforced by a unique index on a constant, and no runtime code branches on which org it is. What the org buys today is scope: `org_id` sits on projects and on role assignments, the session actor carries it, and every query is scoped by it, so multi-tenancy later means resolving a different org at login rather than backfilling a column onto every table. See [ADR-0005](docs/adr/0005-organization-scoping.md).
 

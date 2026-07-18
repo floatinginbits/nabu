@@ -105,16 +105,36 @@ func (q *Queries) RevokeRefreshTokenFamily(ctx context.Context, familyID uuid.UU
 	return err
 }
 
-const revokeRefreshTokenFamilyByHash = `-- name: RevokeRefreshTokenFamilyByHash :exec
+const revokeRefreshTokenFamilyByHash = `-- name: RevokeRefreshTokenFamilyByHash :many
 UPDATE refresh_tokens
 SET revoked_at = now()
 WHERE family_id = (SELECT rt.family_id FROM refresh_tokens rt WHERE rt.token_hash = $1)
   AND revoked_at IS NULL
+RETURNING user_id
 `
 
 // Logout: revoke the whole family the presented token belongs to. A missing
 // hash matches no family, so logout is idempotent.
-func (q *Queries) RevokeRefreshTokenFamilyByHash(ctx context.Context, tokenHash []byte) error {
-	_, err := q.db.Exec(ctx, revokeRefreshTokenFamilyByHash, tokenHash)
-	return err
+//
+// RETURNING user_id identifies the session being ended for the audit trail;
+// every row in a family shares it. A repeat logout revokes nothing and returns
+// no rows, which is why the audited actor is nullable.
+func (q *Queries) RevokeRefreshTokenFamilyByHash(ctx context.Context, tokenHash []byte) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, revokeRefreshTokenFamilyByHash, tokenHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
