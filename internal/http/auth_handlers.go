@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/floatinginbits/nabu/internal/actor"
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/user"
@@ -67,12 +68,12 @@ func (s *apiServer) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiServer) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromContext(r.Context())
+	a, ok := actor.FromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 		return
 	}
-	u, err := s.users.GetByID(r.Context(), userID)
+	u, err := s.users.GetByID(r.Context(), a.UserID)
 	if errors.Is(err, user.ErrNotFound) {
 		// A valid token for a since-deleted user: treat as unauthenticated.
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")

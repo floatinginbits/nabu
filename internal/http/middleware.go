@@ -12,28 +12,19 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/floatinginbits/nabu/internal/actor"
 	"github.com/floatinginbits/nabu/internal/auth"
 )
 
 type ctxKey int
 
-const (
-	requestIDKey ctxKey = iota
-	userIDKey
-)
+const requestIDKey ctxKey = iota
 
 // RequestIDFromContext returns the request ID set by the requestID middleware,
 // or "" outside a request.
 func RequestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)
 	return id
-}
-
-// userIDFromContext returns the authenticated user set by requireAuth. The
-// bool is false on public routes, which never run the auth check.
-func userIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	id, ok := ctx.Value(userIDKey).(uuid.UUID)
-	return id, ok
 }
 
 func newRequestID() string {
@@ -117,8 +108,13 @@ func csrf(next http.Handler) http.Handler {
 }
 
 // requireAuth validates the access-token cookie on protected routes and puts
-// the user ID in the context. Public routes (see isPublic) pass through.
-func requireAuth(authsvc *auth.Service) func(http.Handler) http.Handler {
+// the session actor in the context. Public routes (see isPublic) pass through.
+//
+// orgID is the org the session belongs to. It is resolved server-side rather
+// than taken from the request, so a client can never widen its own scope
+// (security-baseline.md); once multi-org lands it comes from a token claim
+// instead, and services never learn the difference.
+func requireAuth(authsvc *auth.Service, orgID uuid.UUID) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isPublic(r) {
@@ -135,7 +131,8 @@ func requireAuth(authsvc *auth.Service) func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey, userID)))
+			ctx := actor.NewContext(r.Context(), actor.Actor{UserID: userID, OrgID: orgID})
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

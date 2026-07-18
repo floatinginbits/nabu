@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/floatinginbits/nabu/internal/actor"
+	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 )
 
@@ -128,6 +130,56 @@ func TestRequireAuth(t *testing.T) {
 				assertErrorCode(t, w, http.StatusUnauthorized, "UNAUTHORIZED")
 			}
 		})
+	}
+}
+
+// The actor reaching the handler must carry the org the middleware was wired
+// with, not just the user from the token — phase 1 fills OrgID in from the
+// resolved singleton org, and a service reading a zero org would silently query
+// nothing rather than fail.
+func TestRequireAuthPopulatesActor(t *testing.T) {
+	log := slog.New(&logRecorder{})
+	authsvc := auth.NewService(nil, nil, []byte(testAuthSecret), log)
+	userID, orgID := uuid.New(), uuid.New()
+
+	var got actor.Actor
+	var ok bool
+	h := requireAuth(authsvc, orgID)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, ok = actor.FromContext(r.Context())
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  accessCookie,
+		Value: mintAccessToken(t, userID, time.Now().Add(time.Hour), testAuthSecret),
+	})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !ok {
+		t.Fatal("no actor in the handler's context")
+	}
+	if got.UserID != userID {
+		t.Errorf("actor UserID = %v, want %v", got.UserID, userID)
+	}
+	if got.OrgID != orgID {
+		t.Errorf("actor OrgID = %v, want %v", got.OrgID, orgID)
+	}
+}
+
+// A public route never runs the token check, so nothing downstream may assume
+// an actor is present.
+func TestRequireAuthLeavesPublicRoutesWithoutAnActor(t *testing.T) {
+	log := slog.New(&logRecorder{})
+	authsvc := auth.NewService(nil, nil, []byte(testAuthSecret), log)
+
+	var ok bool
+	h := requireAuth(authsvc, uuid.New())(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, ok = actor.FromContext(r.Context())
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil))
+
+	if ok {
+		t.Error("public route reached the handler with an actor in context")
 	}
 }
 
