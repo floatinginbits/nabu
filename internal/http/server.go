@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/task"
@@ -21,6 +23,10 @@ type Deps struct {
 	Auth         *auth.Service
 	Users        *user.Service
 	CookieSecure bool
+	// OrgID is the org every session is scoped to. It is uuid.Nil until the
+	// organizations table exists and main.go can resolve the singleton row;
+	// nothing reads the actor's OrgID yet, so it is inert rather than wrong.
+	OrgID uuid.UUID
 }
 
 // NewHandler builds the full HTTP handler: the routes generated from the
@@ -58,7 +64,7 @@ func NewHandler(d Deps) http.Handler {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		},
 	})
-	h = requireAuth(d.Auth)(h)
+	h = requireAuth(d.Auth, d.OrgID)(h)
 	h = csrf(h)
 	h = recovery(log)(h)
 	h = logging(log)(h)
