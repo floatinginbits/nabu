@@ -3,9 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -14,10 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/floatinginbits/nabu/internal/store"
+	"github.com/floatinginbits/nabu/internal/testdb"
 	"github.com/floatinginbits/nabu/internal/user"
 )
 
@@ -27,55 +23,14 @@ import (
 var testPool *pgxpool.Pool
 
 func TestMain(m *testing.M) {
-	flag.Parse()
-	if testing.Short() {
-		os.Exit(m.Run())
-	}
-	code, err := runWithPostgres(m)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	os.Exit(code)
-}
-
-func runWithPostgres(m *testing.M) (int, error) {
-	ctx := context.Background()
-	container, err := tcpostgres.Run(ctx, "postgres:17-alpine",
-		tcpostgres.WithDatabase("nabu_test"),
-		tcpostgres.WithUsername("nabu"),
-		tcpostgres.WithPassword("nabu"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		return 0, fmt.Errorf("starting postgres container: %w", err)
-	}
-	defer func() { _ = testcontainers.TerminateContainer(container) }()
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		return 0, fmt.Errorf("getting connection string: %w", err)
-	}
-	if err := store.Migrate(ctx, dsn); err != nil {
-		return 0, fmt.Errorf("migrating test database: %w", err)
-	}
-
-	testPool, err = pgxpool.New(ctx, dsn)
-	if err != nil {
-		return 0, fmt.Errorf("creating pool: %w", err)
-	}
-	defer testPool.Close()
-
-	return m.Run(), nil
+	testdb.Main(m, &testPool)
 }
 
 // requireDB skips under -short. Tests share one database without truncation,
 // so every test seeds its own user and family and asserts family-scoped.
 func requireDB(t *testing.T) {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test; -short set")
-	}
+	testdb.SkipIfShort(t)
 }
 
 // baseTime is the rotation clock the tests inject. It has no sub-microsecond

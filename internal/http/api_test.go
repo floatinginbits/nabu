@@ -3,25 +3,21 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
-	"github.com/floatinginbits/nabu/internal/store"
 	"github.com/floatinginbits/nabu/internal/task"
+	"github.com/floatinginbits/nabu/internal/testdb"
 	"github.com/floatinginbits/nabu/internal/user"
 )
 
@@ -44,52 +40,15 @@ const (
 var testUserID uuid.UUID
 
 func TestMain(m *testing.M) {
-	flag.Parse()
-	if testing.Short() {
-		os.Exit(m.Run())
-	}
-	code, err := runWithPostgres(m)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	os.Exit(code)
-}
-
-func runWithPostgres(m *testing.M) (int, error) {
-	ctx := context.Background()
-	container, err := tcpostgres.Run(ctx, "postgres:17-alpine",
-		tcpostgres.WithDatabase("nabu_test"),
-		tcpostgres.WithUsername("nabu"),
-		tcpostgres.WithPassword("nabu"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		return 0, fmt.Errorf("starting postgres container: %w", err)
-	}
-	defer func() { _ = testcontainers.TerminateContainer(container) }()
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		return 0, fmt.Errorf("getting connection string: %w", err)
-	}
-	if err := store.Migrate(ctx, dsn); err != nil {
-		return 0, fmt.Errorf("migrating test database: %w", err)
-	}
-	testPool, err = pgxpool.New(ctx, dsn)
-	if err != nil {
-		return 0, fmt.Errorf("creating pool: %w", err)
-	}
-	defer testPool.Close()
-
-	u, err := user.NewService(user.NewPostgresRepository(testPool)).
-		Create(ctx, testUserEmail, testUserDisplayName, testUserPassword)
-	if err != nil {
-		return 0, fmt.Errorf("seeding test user: %w", err)
-	}
-	testUserID = u.ID
-
-	return m.Run(), nil
+	testdb.Main(m, &testPool, testdb.WithSeed(func(ctx context.Context, pool *pgxpool.Pool) error {
+		u, err := user.NewService(user.NewPostgresRepository(pool)).
+			Create(ctx, testUserEmail, testUserDisplayName, testUserPassword)
+		if err != nil {
+			return fmt.Errorf("seeding test user: %w", err)
+		}
+		testUserID = u.ID
+		return nil
+	}))
 }
 
 // testServer is the production handler plus the services behind it, so a test
@@ -104,12 +63,8 @@ type testServer struct {
 // newAPIHandler builds the production handler over a clean tasks table.
 func newAPIHandler(t *testing.T) *testServer {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test; -short set")
-	}
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE tasks"); err != nil {
-		t.Fatalf("truncating tasks: %v", err)
-	}
+	testdb.SkipIfShort(t)
+	testdb.Truncate(context.Background(), t, testPool, "tasks")
 	return newTestServer(t, false)
 }
 
@@ -117,9 +72,7 @@ func newAPIHandler(t *testing.T) *testServer {
 // cookieSecure mirrors Deps.CookieSecure (NABU_COOKIE_SECURE).
 func newTestServer(t *testing.T, cookieSecure bool) *testServer {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test; -short set")
-	}
+	testdb.SkipIfShort(t)
 	rec := &logRecorder{}
 	log := slog.New(rec)
 	users := user.NewService(user.NewPostgresRepository(testPool))
