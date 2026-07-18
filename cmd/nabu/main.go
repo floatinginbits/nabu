@@ -17,6 +17,7 @@ import (
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/config"
 	nabuhttp "github.com/floatinginbits/nabu/internal/http"
+	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/store"
 	"github.com/floatinginbits/nabu/internal/task"
 	"github.com/floatinginbits/nabu/internal/user"
@@ -68,18 +69,34 @@ func run() error {
 		}
 	}
 
-	tasks := task.NewService(task.NewPostgresRepository(pool))
+	projectRepo := project.NewPostgresRepository(pool)
+	// v1 is single-org: the org is a schema-enforced singleton, resolved once
+	// here so every session is scoped to it (see internal/http.Deps.OrgID).
+	orgID, err := projectRepo.SingletonOrgID(startupCtx)
+	if err != nil {
+		return fmt.Errorf("resolving organization: %w", err)
+	}
+	projects := project.NewService(projectRepo)
+
+	tasks := task.NewService(task.NewPostgresRepository(pool), projects)
 	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(pool), []byte(cfg.AuthSecret), log)
 
+	handler, err := nabuhttp.NewHandler(nabuhttp.Deps{
+		Log:          log,
+		Tasks:        tasks,
+		Projects:     projects,
+		Auth:         authSvc,
+		Users:        users,
+		CookieSecure: cfg.CookieSecure,
+		OrgID:        orgID,
+	})
+	if err != nil {
+		return fmt.Errorf("building http handler: %w", err)
+	}
+
 	srv := &stdhttp.Server{
-		Addr: fmt.Sprintf(":%d", cfg.Port),
-		Handler: nabuhttp.NewHandler(nabuhttp.Deps{
-			Log:          log,
-			Tasks:        tasks,
-			Auth:         authSvc,
-			Users:        users,
-			CookieSecure: cfg.CookieSecure,
-		}),
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

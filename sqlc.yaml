@@ -48,6 +48,28 @@ sql:
 
   - engine: "postgresql"
     schema: "internal/store/migrations"
+    queries: "internal/project/queries.sql"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "internal/project/sqlcgen"
+        sql_package: "pgx/v5"
+        omit_unused_structs: true
+        overrides:
+          - db_type: "uuid"
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              import: "github.com/google/uuid"
+              type: "NullUUID"
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    schema: "internal/store/migrations"
     queries: "internal/auth/queries.sql"
     gen:
       go:

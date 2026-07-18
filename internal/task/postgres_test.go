@@ -7,9 +7,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/floatinginbits/nabu/internal/actor"
+	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/testdb"
 )
 
@@ -47,30 +50,90 @@ func (c *queryCapture) last() (string, []any) {
 	return c.sql, c.args
 }
 
-// truncateTasks resets table state between tests (one shared container).
-func truncateTasks(t *testing.T) {
+// fixture is the seeded org and its default project. A task cannot exist
+// without a project, so every test in this package works inside one.
+type fixture struct {
+	orgID     uuid.UUID
+	projectID uuid.UUID
+}
+
+// reset returns the database to just-migrated state: no tasks, and only the
+// project migration 00004 seeds. It deliberately does not truncate projects —
+// that would delete the seeded default project and leave nothing to create a
+// task in.
+func reset(t *testing.T) fixture {
 	t.Helper()
 	testdb.SkipIfShort(t)
-	testdb.Truncate(context.Background(), t, testPool, "tasks")
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, "DELETE FROM projects WHERE lower(key) <> 'gen'"); err != nil {
+		t.Fatalf("deleting test projects: %v", err)
+	}
+	testdb.Truncate(ctx, t, testPool, "tasks")
+
+	var f fixture
+	row := testPool.QueryRow(ctx, "SELECT id, org_id FROM projects WHERE lower(key) = 'gen'")
+	if err := row.Scan(&f.projectID, &f.orgID); err != nil {
+		t.Fatalf("reading seeded project: %v", err)
+	}
+	return f
+}
+
+// actorCtx is what every service call needs: the org scope comes from the
+// session actor, never from the caller's arguments.
+func (f fixture) actorCtx() context.Context {
+	return actor.NewContext(context.Background(), actor.Actor{UserID: uuid.New(), OrgID: f.orgID})
+}
+
+func newTestService() *Service {
+	return NewService(NewPostgresRepository(testPool), project.NewService(project.NewPostgresRepository(testPool)))
+}
+
+// seedTasks inserts tasks with explicit created_at spacing so ordering is
+// deterministic; index 0 is the newest.
+func seedTasks(t *testing.T, projectID uuid.UUID, n int) {
+	t.Helper()
+	for i := range n {
+		if _, err := testPool.Exec(context.Background(),
+			"INSERT INTO tasks (project_id, title, created_at, updated_at) VALUES ($1, $2, now() - make_interval(mins => $3), now())",
+			projectID, fmt.Sprintf("task %d", i), i); err != nil {
+			t.Fatalf("seeding: %v", err)
+		}
+	}
+}
+
+// createProject inserts a project directly: project.Service has no Create (it
+// is admin-only and lands with RBAC), and these tests need more than one.
+func createProject(t *testing.T, orgID uuid.UUID, key, name string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	row := testPool.QueryRow(context.Background(),
+		"INSERT INTO projects (org_id, key, name) VALUES ($1, $2, $3) RETURNING id", orgID, key, name)
+	if err := row.Scan(&id); err != nil {
+		t.Fatalf("seeding project %s: %v", key, err)
+	}
+	return id
 }
 
 func TestPostgresCreateAndList(t *testing.T) {
-	truncateTasks(t)
+	f := reset(t)
 	ctx := context.Background()
 	repo := NewPostgresRepository(testPool)
 
-	created, err := repo.Create(ctx, "first task")
+	created, err := repo.Create(ctx, f.projectID, "first task")
 	if err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
-	if created.ID.String() == "" || created.Title != "first task" || created.Status != StatusTodo {
+	if created.ID == uuid.Nil || created.Title != "first task" || created.Status != StatusTodo {
 		t.Errorf("Create() = %+v, want todo task titled 'first task' with id", created)
+	}
+	if created.ProjectID != f.projectID {
+		t.Errorf("Create() ProjectID = %v, want %v", created.ProjectID, f.projectID)
 	}
 	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
 		t.Error("Create() timestamps are zero")
 	}
 
-	got, err := repo.List(ctx, ListFilter{Limit: 10})
+	got, err := repo.List(ctx, ListFilter{Scope: Scope{OrgID: f.orgID}, Limit: 10})
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
@@ -80,14 +143,14 @@ func TestPostgresCreateAndList(t *testing.T) {
 }
 
 func TestPostgresListStatusFilter(t *testing.T) {
-	truncateTasks(t)
+	f := reset(t)
 	ctx := context.Background()
 	repo := NewPostgresRepository(testPool)
 
-	if _, err := repo.Create(ctx, "stays todo"); err != nil {
+	if _, err := repo.Create(ctx, f.projectID, "stays todo"); err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
-	done, err := repo.Create(ctx, "gets done")
+	done, err := repo.Create(ctx, f.projectID, "gets done")
 	if err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
@@ -96,29 +159,69 @@ func TestPostgresListStatusFilter(t *testing.T) {
 	}
 
 	status := StatusDone
-	got, err := repo.List(ctx, ListFilter{Status: &status, Limit: 10})
+	got, err := repo.List(ctx, ListFilter{Scope: Scope{OrgID: f.orgID}, Status: &status, Limit: 10})
 	if err != nil {
-		t.Fatalf("List() error: %v", err)
+		t.Fatalf("List(done) error: %v", err)
 	}
 	if len(got) != 1 || got[0].ID != done.ID || got[0].Status != StatusDone {
 		t.Errorf("List(done) = %+v, want only the done task", got)
 	}
 }
 
-func TestPostgresCursorPagination(t *testing.T) {
-	truncateTasks(t)
+// The org scope is what makes the RBAC model meaningful
+// (security-baseline.md), so it is asserted against real rows rather than
+// assumed from reading the SQL.
+func TestPostgresListScoping(t *testing.T) {
+	f := reset(t)
 	ctx := context.Background()
 	repo := NewPostgresRepository(testPool)
-	svc := NewService(repo)
 
-	// Explicit created_at spacing keeps ordering deterministic.
-	for i := range 5 {
-		if _, err := testPool.Exec(ctx,
-			"INSERT INTO tasks (title, created_at, updated_at) VALUES ($1, now() - make_interval(mins => $2), now())",
-			fmt.Sprintf("task %d", i), i); err != nil {
-			t.Fatalf("seeding: %v", err)
-		}
+	other := createProject(t, f.orgID, "OTH", "Other")
+	mine, err := repo.Create(ctx, f.projectID, "in the default project")
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
 	}
+	if _, err := repo.Create(ctx, other, "in the other project"); err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	t.Run("no project filter returns the whole org", func(t *testing.T) {
+		got, err := repo.List(ctx, ListFilter{Scope: Scope{OrgID: f.orgID}, Limit: 10})
+		if err != nil {
+			t.Fatalf("List() error: %v", err)
+		}
+		if len(got) != 2 {
+			t.Errorf("List() returned %d tasks, want both", len(got))
+		}
+	})
+
+	t.Run("project filter narrows", func(t *testing.T) {
+		got, err := repo.List(ctx, ListFilter{Scope: Scope{OrgID: f.orgID, ProjectID: &f.projectID}, Limit: 10})
+		if err != nil {
+			t.Fatalf("List() error: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != mine.ID {
+			t.Errorf("List(project) = %+v, want only the default project's task", got)
+		}
+	})
+
+	t.Run("another org sees nothing", func(t *testing.T) {
+		got, err := repo.List(ctx, ListFilter{Scope: Scope{OrgID: uuid.New()}, Limit: 10})
+		if err != nil {
+			t.Fatalf("List() error: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("List(other org) = %+v, want nothing", got)
+		}
+	})
+}
+
+func TestPostgresCursorPagination(t *testing.T) {
+	f := reset(t)
+	ctx := f.actorCtx()
+	svc := newTestService()
+
+	seedTasks(t, f.projectID, 5)
 
 	var seen []string
 	cursor := ""
@@ -151,18 +254,11 @@ func TestPostgresCursorPagination(t *testing.T) {
 }
 
 func TestPostgresPaginationExactPageBoundary(t *testing.T) {
-	truncateTasks(t)
-	ctx := context.Background()
-	repo := NewPostgresRepository(testPool)
-	svc := NewService(repo)
+	f := reset(t)
+	ctx := f.actorCtx()
+	svc := newTestService()
 
-	for i := range 4 {
-		if _, err := testPool.Exec(ctx,
-			"INSERT INTO tasks (title, created_at, updated_at) VALUES ($1, now() - make_interval(mins => $2), now())",
-			fmt.Sprintf("task %d", i), i); err != nil {
-			t.Fatalf("seeding: %v", err)
-		}
-	}
+	seedTasks(t, f.projectID, 4)
 
 	first, err := svc.List(ctx, ListParams{PageSize: 2})
 	if err != nil {
@@ -184,43 +280,94 @@ func TestPostgresPaginationExactPageBoundary(t *testing.T) {
 // ADR-0001 mitigation: EXPLAIN the real filtered task-list query on real
 // Postgres so planner surprises fail a test, not production. Captures the SQL
 // the repository actually executes (via the pgx tracer) and asserts the
-// pagination path uses the (created_at, id) index rather than a Seq Scan.
+// pagination path uses an index rather than a Seq Scan.
+//
+// Two cases, because the two list shapes need two different indexes: an
+// unfiltered list cannot use a leading-project_id index to satisfy
+// ORDER BY created_at DESC, id DESC, and a project-filtered list should not
+// walk the whole org. One case alone would pass while the other shape silently
+// regressed to a sequential scan.
+//
 // Caveat: EXPLAIN with bound values yields a custom plan; generic-plan
 // behavior after statement reuse can differ (see backend-design.md).
 func TestPostgresListQueryUsesIndex(t *testing.T) {
-	truncateTasks(t)
+	f := reset(t)
 	ctx := context.Background()
 	repo := NewPostgresRepository(testPool)
 
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO tasks (title, status, created_at, updated_at)
-		SELECT 'task ' || i,
-		       (ARRAY['todo','in_progress','done'])[1 + i % 3]::task_status,
-		       now() - make_interval(secs => i),
-		       now()
-		FROM generate_series(1, 5000) AS i`); err != nil {
-		t.Fatalf("seeding: %v", err)
+	// Several projects, so filtering by one is selective and the planner's
+	// choice between the two indexes is a real one.
+	projectIDs := []uuid.UUID{f.projectID}
+	for _, key := range []string{"P1", "P2", "P3", "P4"} {
+		projectIDs = append(projectIDs, createProject(t, f.orgID, key, key))
+	}
+	for i, id := range projectIDs {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO tasks (project_id, title, status, created_at, updated_at)
+			SELECT $1,
+			       'task ' || i,
+			       (ARRAY['todo','in_progress','done'])[1 + i % 3]::task_status,
+			       now() - make_interval(secs => i * 5 + $2),
+			       now()
+			FROM generate_series(1, 2000) AS i`, id, i); err != nil {
+			t.Fatalf("seeding: %v", err)
+		}
 	}
 	if _, err := testPool.Exec(ctx, "ANALYZE tasks"); err != nil {
-		t.Fatalf("analyzing: %v", err)
+		t.Fatalf("analyzing tasks: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, "ANALYZE projects"); err != nil {
+		t.Fatalf("analyzing projects: %v", err)
 	}
 
 	// A mid-table cursor, so an efficient plan must seek, not scan from the top.
 	var mid Cursor
-	row := testPool.QueryRow(ctx, "SELECT created_at, id FROM tasks ORDER BY created_at DESC, id DESC OFFSET 2500 LIMIT 1")
+	row := testPool.QueryRow(ctx, "SELECT created_at, id FROM tasks ORDER BY created_at DESC, id DESC OFFSET 5000 LIMIT 1")
 	if err := row.Scan(&mid.CreatedAt, &mid.ID); err != nil {
 		t.Fatalf("picking cursor row: %v", err)
 	}
 
-	if _, err := repo.List(ctx, ListFilter{After: &mid, Limit: 51}); err != nil {
-		t.Fatalf("List() error: %v", err)
+	tests := []struct {
+		name      string
+		filter    ListFilter
+		wantIndex string
+	}{
+		{
+			name:      "no project filter",
+			filter:    ListFilter{Scope: Scope{OrgID: f.orgID}, After: &mid, Limit: 51},
+			wantIndex: "tasks_created_at_id_idx",
+		},
+		{
+			name:      "project filter",
+			filter:    ListFilter{Scope: Scope{OrgID: f.orgID, ProjectID: &f.projectID}, After: &mid, Limit: 51},
+			wantIndex: "tasks_project_created_at_id_idx",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := repo.List(ctx, tt.filter); err != nil {
+				t.Fatalf("List() error: %v", err)
+			}
+			planText := explainLast(t)
+			if strings.Contains(planText, "Seq Scan on tasks") {
+				t.Errorf("cursor-paginated list falls back to a sequential scan:\n%s", planText)
+			}
+			if !strings.Contains(planText, tt.wantIndex) {
+				t.Errorf("cursor-paginated list does not use %s:\n%s", tt.wantIndex, planText)
+			}
+		})
+	}
+}
+
+// explainLast EXPLAINs the query the repository last sent.
+func explainLast(t *testing.T) string {
+	t.Helper()
 	sql, args := testCapture.last()
 	if !strings.Contains(sql, "FROM tasks") {
 		t.Fatalf("captured unexpected query: %s", sql)
 	}
 
-	rows, err := testPool.Query(ctx, "EXPLAIN "+sql, args...)
+	rows, err := testPool.Query(context.Background(), "EXPLAIN "+sql, args...)
 	if err != nil {
 		t.Fatalf("EXPLAIN error: %v", err)
 	}
@@ -237,12 +384,5 @@ func TestPostgresListQueryUsesIndex(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("reading plan: %v", err)
 	}
-
-	planText := plan.String()
-	if strings.Contains(planText, "Seq Scan on tasks") {
-		t.Errorf("cursor-paginated list falls back to a sequential scan:\n%s", planText)
-	}
-	if !strings.Contains(planText, "tasks_created_at_id_idx") {
-		t.Errorf("cursor-paginated list does not use tasks_created_at_id_idx:\n%s", planText)
-	}
+	return plan.String()
 }

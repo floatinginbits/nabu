@@ -91,11 +91,35 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      summary: List the projects in the caller's organization
+      description: >
+        Unpaginated: a self-hosted org has a handful of projects, and the list
+        populates a selector rather than a scrollable view.
+      responses:
+        "200":
+          description: Every project the caller's organization owns
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/tasks:
     get:
       operationId: listTasks
       summary: List tasks, newest first, cursor-paginated
       parameters:
+        - name: projectId
+          in: query
+          required: false
+          description: Restrict to one project. Omit for every project in the org.
+          schema:
+            type: string
+            format: uuid
         - name: status
           in: query
           required: false
@@ -196,11 +220,49 @@ components:
       type: string
       enum: [todo, in_progress, done]
 
-    Task:
+    Project:
       type: object
-      required: [id, title, status, createdAt, updatedAt]
+      required: [id, key, name, createdAt, updatedAt]
       properties:
         id:
+          type: string
+          format: uuid
+        key:
+          type: string
+          description: Short human-facing identifier, unique per organization.
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ProjectList:
+      type: object
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+        nextCursor:
+          type: string
+          nullable: true
+          description: >
+            Always null. Projects are a bounded per-org collection, so the
+            endpoint is not paginated yet; the field is present so every list
+            response carries the same envelope.
+
+    Task:
+      type: object
+      required: [id, projectId, title, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
           type: string
           format: uuid
         title:
@@ -216,11 +278,15 @@ components:
 
     CreateTaskRequest:
       type: object
-      required: [title]
+      required: [title, projectId]
       properties:
         title:
           type: string
           maxLength: 500
+        projectId:
+          type: string
+          format: uuid
+          description: Must be a project in the caller's organization.
 
     TaskList:
       type: object

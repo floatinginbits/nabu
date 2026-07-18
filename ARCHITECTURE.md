@@ -6,7 +6,7 @@ This document describes Nabu's system architecture: the tech stack, how the piec
 
 Nabu is a self-hosted, open-source task tracker for software development teams. Core constraints that shape every decision below:
 
-- **Self-hosted only** — one deployment serves one organization; there is no multi-tenancy
+- **Self-hosted only** — one deployment serves one organization; there is no multi-tenancy. The schema still carries an organization as a first-class (singleton) entity so that stays a future feature rather than a backfill — see Data model below and [ADR-0005](docs/adr/0005-organization-scoping.md)
 - **MIT licensed** — no commercial license required to build or run
 - **Enterprise-grade** — designed to satisfy the operational and security expectations of an enterprise deployment, even where the full feature (SSO, compliance certs) isn't built yet
 - **Scoped to software teams** — not a generic project-management tool; the data model and UI are opinionated around how software gets built
@@ -47,6 +47,8 @@ The app server holds no session state. Everything that needs to persist — sess
 One unified task entity underlies Kanban, Scrum, and backlog-plus-milestones — these are views over the same data (grouping/filtering), not separate schemas. Sprint and story points are optional fields on a task, not a parallel entity. Two extensibility points are built into the schema from day one, specifically to avoid a future migration:
 - A `links`/`references` field on tasks, populated by pasted PR/issue URLs in v1 and by webhook-driven automation in v2 without a schema change
 - A `NotificationService` interface (Strategy pattern) with a v1 no-op implementation — email, Slack, and webhook notifiers plug in later via the same interface, with no business-logic changes
+
+Tasks live in projects, and projects belong to an organization. v1 behaves as single-org — the `organizations` table holds exactly one row, enforced by a unique index on a constant, and no runtime code branches on which org it is. What the org buys today is scope: `org_id` sits on projects and on role assignments, the session actor carries it, and every query is scoped by it, so multi-tenancy later means resolving a different org at login rather than backfilling a column onto every table. See [ADR-0005](docs/adr/0005-organization-scoping.md).
 
 Persistence uses `sqlc` (raw SQL compiled to type-safe Go) over PostgreSQL, with `goose` for schema migrations — the migration files double as `sqlc`'s schema source. See [ADR-0001](docs/adr/0001-database-access-pattern.md) for the rationale, risks, and mitigations. Full schema-level conventions: `docs/conventions/data-model.md`.
 
@@ -100,6 +102,8 @@ None outstanding — the initial set of foundational decisions is resolved and f
 
 - Database access pattern → sqlc + goose ([ADR-0001](docs/adr/0001-database-access-pattern.md))
 - Frontend styling → shadcn/ui, Tailwind + Radix ([ADR-0002](docs/adr/0002-frontend-styling.md))
+- Session and token design → HS256 JWT + rotating opaque refresh token ([ADR-0003](docs/adr/0003-auth-session-design.md))
+- Organization scoping → a singleton org now, single-org behavior ([ADR-0005](docs/adr/0005-organization-scoping.md))
 - API field casing → camelCase (see API design above)
 - Image registry → GHCR (see Deployment above)
 

@@ -38,7 +38,9 @@ func (e TaskStatus) Valid() bool {
 
 // CreateTaskRequest defines model for CreateTaskRequest.
 type CreateTaskRequest struct {
-	Title string `json:"title"`
+	// ProjectId Must be a project in the caller's organization.
+	ProjectId openapi_types.UUID `json:"projectId"`
+	Title     string             `json:"title"`
 }
 
 // Error defines model for Error.
@@ -66,10 +68,30 @@ type LoginRequest struct {
 	Password string              `json:"password"`
 }
 
+// Project defines model for Project.
+type Project struct {
+	CreatedAt time.Time          `json:"createdAt"`
+	Id        openapi_types.UUID `json:"id"`
+
+	// Key Short human-facing identifier, unique per organization.
+	Key       string    `json:"key"`
+	Name      string    `json:"name"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ProjectList defines model for ProjectList.
+type ProjectList struct {
+	Data []Project `json:"data"`
+
+	// NextCursor Always null. Projects are a bounded per-org collection, so the endpoint is not paginated yet; the field is present so every list response carries the same envelope.
+	NextCursor *string `json:"nextCursor"`
+}
+
 // Task defines model for Task.
 type Task struct {
 	CreatedAt time.Time          `json:"createdAt"`
 	Id        openapi_types.UUID `json:"id"`
+	ProjectId openapi_types.UUID `json:"projectId"`
 	Status    TaskStatus         `json:"status"`
 	Title     string             `json:"title"`
 	UpdatedAt time.Time          `json:"updatedAt"`
@@ -101,7 +123,9 @@ type ValidationError = Error
 
 // ListTasksParams defines parameters for ListTasks.
 type ListTasksParams struct {
-	Status *TaskStatus `form:"status,omitempty" json:"status,omitempty"`
+	// ProjectId Restrict to one project. Omit for every project in the org.
+	ProjectId *openapi_types.UUID `form:"projectId,omitempty" json:"projectId,omitempty"`
+	Status    *TaskStatus         `form:"status,omitempty" json:"status,omitempty"`
 
 	// Cursor Opaque cursor from a previous response's nextCursor.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -127,6 +151,9 @@ type ServerInterface interface {
 	// Rotate the session using the refresh cookie
 	// (POST /api/v1/auth/refresh)
 	Refresh(w http.ResponseWriter, r *http.Request)
+	// List the projects in the caller's organization
+	// (GET /api/v1/projects)
+	ListProjects(w http.ResponseWriter, r *http.Request)
 	// List tasks, newest first, cursor-paginated
 	// (GET /api/v1/tasks)
 	ListTasks(w http.ResponseWriter, r *http.Request, params ListTasksParams)
@@ -192,6 +219,20 @@ func (siw *ServerInterfaceWrapper) Refresh(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// ListProjects operation middleware
+func (siw *ServerInterfaceWrapper) ListProjects(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjects(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListTasks operation middleware
 func (siw *ServerInterfaceWrapper) ListTasks(w http.ResponseWriter, r *http.Request) {
 
@@ -200,6 +241,19 @@ func (siw *ServerInterfaceWrapper) ListTasks(w http.ResponseWriter, r *http.Requ
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListTasksParams
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
 
 	// ------------- Optional query parameter "status" -------------
 
@@ -416,6 +470,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/refresh", wrapper.Refresh)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/projects", wrapper.ListProjects)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/tasks", wrapper.ListTasks)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/tasks", wrapper.CreateTask)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/me", wrapper.GetCurrentUser)

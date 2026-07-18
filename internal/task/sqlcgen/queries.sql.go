@@ -7,22 +7,38 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createTask = `-- name: CreateTask :one
-INSERT INTO tasks (title)
-VALUES ($1)
-RETURNING id, title, status, created_at, updated_at
+INSERT INTO tasks (project_id, title)
+VALUES ($1, $2)
+RETURNING id, project_id, title, status, created_at, updated_at
 `
 
-func (q *Queries) CreateTask(ctx context.Context, title string) (Task, error) {
-	row := q.db.QueryRow(ctx, createTask, title)
-	var i Task
+type CreateTaskParams struct {
+	ProjectID uuid.UUID
+	Title     string
+}
+
+type CreateTaskRow struct {
+	ID        uuid.UUID
+	ProjectID uuid.UUID
+	Title     string
+	Status    TaskStatus
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (CreateTaskRow, error) {
+	row := q.db.QueryRow(ctx, createTask, arg.ProjectID, arg.Title)
+	var i CreateTaskRow
 	err := row.Scan(
 		&i.ID,
+		&i.ProjectID,
 		&i.Title,
 		&i.Status,
 		&i.CreatedAt,
@@ -32,26 +48,45 @@ func (q *Queries) CreateTask(ctx context.Context, title string) (Task, error) {
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, title, status, created_at, updated_at
-FROM tasks
-WHERE ($1::task_status IS NULL OR status = $1)
+SELECT t.id, t.project_id, t.title, t.status, t.created_at, t.updated_at
+FROM tasks t
+JOIN projects p ON p.id = t.project_id
+WHERE p.org_id = $1
+  AND ($2::uuid IS NULL OR t.project_id = $2)
+  AND ($3::task_status IS NULL OR t.status = $3)
   AND (
-    $2::timestamptz IS NULL
-    OR (created_at, id) < ($2::timestamptz, $3::uuid)
+    $4::timestamptz IS NULL
+    OR (t.created_at, t.id) < ($4::timestamptz, $5::uuid)
   )
-ORDER BY created_at DESC, id DESC
-LIMIT $4
+ORDER BY t.created_at DESC, t.id DESC
+LIMIT $6
 `
 
 type ListTasksParams struct {
+	OrgID           uuid.UUID
+	ProjectID       uuid.NullUUID
 	Status          NullTaskStatus
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        uuid.NullUUID
 	PageSize        int32
 }
 
-func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, error) {
+type ListTasksRow struct {
+	ID        uuid.UUID
+	ProjectID uuid.UUID
+	Title     string
+	Status    TaskStatus
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// The join is the org scope: a task is reachable only through a project in the
+// caller's org, so a client-supplied project_id can narrow the result but never
+// widen it (security-baseline.md).
+func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]ListTasksRow, error) {
 	rows, err := q.db.Query(ctx, listTasks,
+		arg.OrgID,
+		arg.ProjectID,
 		arg.Status,
 		arg.CursorCreatedAt,
 		arg.CursorID,
@@ -61,11 +96,12 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Task
+	var items []ListTasksRow
 	for rows.Next() {
-		var i Task
+		var i ListTasksRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.ProjectID,
 			&i.Title,
 			&i.Status,
 			&i.CreatedAt,

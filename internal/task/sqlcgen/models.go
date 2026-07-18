@@ -7,9 +7,6 @@ package sqlcgen
 import (
 	"database/sql/driver"
 	"fmt"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 type TaskStatus string
@@ -63,12 +60,4 @@ func (e TaskStatus) Valid() bool {
 		return true
 	}
 	return false
-}
-
-type Task struct {
-	ID        uuid.UUID
-	Title     string
-	Status    TaskStatus
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }

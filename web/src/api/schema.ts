@@ -101,6 +101,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the projects in the caller's organization
+         * @description Unpaginated: a self-hosted org has a handful of projects, and the list populates a selector rather than a scrollable view.
+         */
+        get: operations["listProjects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tasks": {
         parameters: {
             query?: never;
@@ -139,9 +159,27 @@ export interface components {
         };
         /** @enum {string} */
         TaskStatus: "todo" | "in_progress" | "done";
+        Project: {
+            /** Format: uuid */
+            id: string;
+            /** @description Short human-facing identifier, unique per organization. */
+            key: string;
+            name: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ProjectList: {
+            data: components["schemas"]["Project"][];
+            /** @description Always null. Projects are a bounded per-org collection, so the endpoint is not paginated yet; the field is present so every list response carries the same envelope. */
+            nextCursor: string | null;
+        };
         Task: {
             /** Format: uuid */
             id: string;
+            /** Format: uuid */
+            projectId: string;
             title: string;
             status: components["schemas"]["TaskStatus"];
             /** Format: date-time */
@@ -151,6 +189,11 @@ export interface components {
         };
         CreateTaskRequest: {
             title: string;
+            /**
+             * Format: uuid
+             * @description Must be a project in the caller's organization.
+             */
+            projectId: string;
         };
         TaskList: {
             data: components["schemas"]["Task"][];
@@ -306,9 +349,32 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    listProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every project the caller's organization owns */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     listTasks: {
         parameters: {
             query?: {
+                /** @description Restrict to one project. Omit for every project in the org. */
+                projectId?: string;
                 status?: components["schemas"]["TaskStatus"];
                 /** @description Opaque cursor from a previous response's nextCursor. */
                 cursor?: string;

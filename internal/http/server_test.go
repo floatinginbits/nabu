@@ -3,39 +3,85 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
+	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/task"
 )
 
 // stubRepo satisfies task.Repository for tests that never reach the database.
 type stubRepo struct{}
 
-func (stubRepo) Create(context.Context, string) (task.Task, error)          { return task.Task{}, nil }
+func (stubRepo) Create(context.Context, uuid.UUID, string) (task.Task, error) {
+	return task.Task{}, nil
+}
 func (stubRepo) List(context.Context, task.ListFilter) ([]task.Task, error) { return nil, nil }
+
+// stubProjects satisfies task.Projects by resolving every project id. These
+// tests are about routing and the middleware chain, so project validation is
+// deliberately out of the way; api_test.go covers it against real rows.
+type stubProjects struct{}
+
+func (stubProjects) GetByID(_ context.Context, id uuid.UUID) (project.Project, error) {
+	return project.Project{ID: id, OrgID: uuid.New(), Key: "GEN", Name: "General"}, nil
+}
 
 // newTestHandler builds the production handler with no database behind it.
 // The auth service is real — verifying an access token needs only the signing
 // secret, no repository — so the real middleware chain still runs, and these
 // routing/middleware tests stay fast enough for -short.
+//
+// OrgID is synthetic rather than the seeded org: nothing here reaches Postgres,
+// so there is no row to resolve, and under -short no container exists at all.
+// The integration fixtures in api_test.go use the real one.
 func newTestHandler(t *testing.T) (http.Handler, *logRecorder) {
 	t.Helper()
 	rec := &logRecorder{}
 	log := slog.New(rec)
-	return NewHandler(Deps{
+	h, err := NewHandler(Deps{
 		Log:   log,
-		Tasks: task.NewService(stubRepo{}),
+		Tasks: task.NewService(stubRepo{}, stubProjects{}),
 		Auth:  auth.NewService(nil, nil, []byte(testAuthSecret), log),
 		// Users is only reached by GET /users/me, which these tests don't call;
 		// the auth_test.go integration tests cover it against real Postgres.
 		Users:        nil,
 		CookieSecure: false,
-	}), rec
+		OrgID:        uuid.New(),
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error: %v", err)
+	}
+	return h, rec
+}
+
+// NewHandler fails fast on a zero OrgID because the field is zero-value-valid
+// on a struct literal: an omitted OrgID would otherwise put uuid.Nil in every
+// actor and make org-scoped queries return empty results instead of erroring.
+// The failure mode is silent, so the guard needs a test.
+func TestNewHandlerRequiresOrgID(t *testing.T) {
+	log := slog.New(&logRecorder{})
+	h, err := NewHandler(Deps{
+		Log:   log,
+		Tasks: task.NewService(stubRepo{}, stubProjects{}),
+		Auth:  auth.NewService(nil, nil, []byte(testAuthSecret), log),
+	})
+	if err == nil {
+		t.Fatal("NewHandler() with a zero OrgID returned no error")
+	}
+	if !errors.Is(err, errMissingOrgID) {
+		t.Errorf("NewHandler() error = %v, want errMissingOrgID", err)
+	}
+	if h != nil {
+		t.Error("NewHandler() returned a handler alongside its error")
+	}
 }
 
 func TestHealth(t *testing.T) {

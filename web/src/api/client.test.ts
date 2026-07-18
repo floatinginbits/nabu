@@ -194,16 +194,15 @@ test("a retried POST replays its body", async () => {
   const { postedTaskBodies, refreshCalls } = stubFetch();
   const { client } = await loadClient();
 
-  const { error } = await client.POST("/api/v1/tasks", {
-    body: { title: "Dogfood Nabu" },
-  });
+  const body = {
+    title: "Dogfood Nabu",
+    projectId: "8f1e0c2a-5b3d-4e6f-9a7b-1c2d3e4f5a6b",
+  };
+  const { error } = await client.POST("/api/v1/tasks", { body });
 
   expect(error).toBeUndefined();
   expect(refreshCalls()).toBe(1);
   // Once on the 401, once on the retry. The request handed to onResponse has a
   // disturbed body stream; only the clone stashed in onRequest can be replayed.
-  expect(postedTaskBodies).toEqual([
-    { title: "Dogfood Nabu" },
-    { title: "Dogfood Nabu" },
-  ]);
+  expect(postedTaskBodies).toEqual([body, body]);
 });

@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { client } from "./client";
+import type { components } from "./schema";
+
+type CreateTaskRequest = components["schemas"]["CreateTaskRequest"];
 
 export function useTasks() {
   return useQuery({
@@ -13,13 +16,22 @@ export function useTasks() {
   });
 }
 
+export function useProjects() {
+  return useQuery({
+    queryKey: ["projects"],
+    queryFn: async () => {
+      const { data, error } = await client.GET("/api/v1/projects");
+      if (error) throw new Error(error.error.message);
+      return data;
+    },
+  });
+}
+
 export function useCreateTask() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (title: string) => {
-      const { data, error } = await client.POST("/api/v1/tasks", {
-        body: { title },
-      });
+    mutationFn: async (body: CreateTaskRequest) => {
+      const { data, error } = await client.POST("/api/v1/tasks", { body });
       if (error) throw new Error(error.error.message);
       return data;
     },

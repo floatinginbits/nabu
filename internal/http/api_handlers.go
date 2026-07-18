@@ -8,6 +8,7 @@ import (
 
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
+	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/task"
 	"github.com/floatinginbits/nabu/internal/user"
 )
@@ -17,6 +18,7 @@ import (
 type apiServer struct {
 	log          *slog.Logger
 	tasks        *task.Service
+	projects     *project.Service
 	auth         *auth.Service
 	users        *user.Service
 	cookieSecure bool
@@ -32,7 +34,7 @@ func (s *apiServer) CreateTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid JSON body")
 		return
 	}
-	t, err := s.tasks.Create(r.Context(), req.Title)
+	t, err := s.tasks.Create(r.Context(), req.ProjectId, req.Title)
 	if err != nil {
 		s.writeServiceError(w, r, err)
 		return
@@ -42,6 +44,7 @@ func (s *apiServer) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *apiServer) ListTasks(w http.ResponseWriter, r *http.Request, params api.ListTasksParams) {
 	var p task.ListParams
+	p.ProjectID = params.ProjectId
 	if params.Status != nil {
 		st := task.Status(*params.Status)
 		p.Status = &st
@@ -69,6 +72,27 @@ func (s *apiServer) ListTasks(w http.ResponseWriter, r *http.Request, params api
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *apiServer) ListProjects(w http.ResponseWriter, r *http.Request) {
+	ps, err := s.projects.List(r.Context())
+	if err != nil {
+		s.writeServiceError(w, r, err)
+		return
+	}
+	// Projects are a bounded per-org collection, so the list is unpaginated;
+	// nextCursor stays null to keep the envelope uniform for the TS client.
+	out := api.ProjectList{Data: make([]api.Project, len(ps))}
+	for i, p := range ps {
+		out.Data[i] = api.Project{
+			Id:        p.ID,
+			Key:       p.Key,
+			Name:      p.Name,
+			CreatedAt: p.CreatedAt,
+			UpdatedAt: p.UpdatedAt,
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *apiServer) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	var ve *task.ValidationError
 	if errors.As(err, &ve) {
@@ -85,6 +109,7 @@ func (s *apiServer) writeServiceError(w http.ResponseWriter, r *http.Request, er
 func toAPITask(t task.Task) api.Task {
 	return api.Task{
 		Id:        t.ID,
+		ProjectId: t.ProjectID,
 		Title:     t.Title,
 		Status:    api.TaskStatus(t.Status),
 		CreatedAt: t.CreatedAt,

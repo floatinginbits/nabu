@@ -4,6 +4,8 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -11,21 +13,24 @@ import (
 
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
+	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/task"
 	"github.com/floatinginbits/nabu/internal/user"
 	"github.com/floatinginbits/nabu/internal/web"
 )
 
+var errMissingOrgID = errors.New("Deps.OrgID must be set")
+
 // Deps are the dependencies NewHandler wires into the HTTP layer.
 type Deps struct {
 	Log          *slog.Logger
 	Tasks        *task.Service
+	Projects     *project.Service
 	Auth         *auth.Service
 	Users        *user.Service
 	CookieSecure bool
-	// OrgID is the org every session is scoped to. It is uuid.Nil until the
-	// organizations table exists and main.go can resolve the singleton row;
-	// nothing reads the actor's OrgID yet, so it is inert rather than wrong.
+	// OrgID is the org every session is scoped to, resolved from the singleton
+	// organizations row at startup.
 	OrgID uuid.UUID
 }
 
@@ -33,7 +38,14 @@ type Deps struct {
 // OpenAPI spec, wrapped in the fixed middleware chain requestID → logging →
 // recovery → csrf → auth (see backend-design.md), so logging always captures a
 // request even when a handler panics and auth runs after recovery.
-func NewHandler(d Deps) http.Handler {
+// It fails rather than starting with a zero OrgID: OrgID is zero-value-valid on
+// a struct literal, so an omitted field would put uuid.Nil in every actor and
+// silently return empty results from every org-scoped query instead of erroring
+// (backend-design.md: fail fast on missing config).
+func NewHandler(d Deps) (http.Handler, error) {
+	if d.OrgID == uuid.Nil {
+		return nil, fmt.Errorf("building handler: %w", errMissingOrgID)
+	}
 	log := d.Log
 	mux := http.NewServeMux()
 	// The SPA takes every GET the API doesn't claim ("GET /" rather than "/"
@@ -53,6 +65,7 @@ func NewHandler(d Deps) http.Handler {
 	srv := &apiServer{
 		log:          log,
 		tasks:        d.Tasks,
+		projects:     d.Projects,
 		auth:         d.Auth,
 		users:        d.Users,
 		cookieSecure: d.CookieSecure,
@@ -69,7 +82,7 @@ func NewHandler(d Deps) http.Handler {
 	h = recovery(log)(h)
 	h = logging(log)(h)
 	h = requestID(h)
-	return h
+	return h, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
