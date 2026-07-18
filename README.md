@@ -33,14 +33,22 @@ Named after the Babylonian god of writing and scribes, Nabu is built for teams t
 git clone https://github.com/floatinginbits/nabu.git
 cd nabu
 
-# Start the full stack
-docker compose up -d
+# Generate the required signing secret and bootstrap an admin account
+cat > .env <<EOF
+NABU_AUTH_SECRET=$(openssl rand -base64 32)
+NABU_INITIAL_ADMIN_EMAIL=admin@example.com
+NABU_INITIAL_ADMIN_PASSWORD=$(openssl rand -base64 18)
+EOF
 
-# With observability (Prometheus + Grafana)
-docker compose --profile observability up -d
+# Start the stack
+docker compose up -d
 ```
 
-Nabu will be available at `http://localhost:3000`.
+`NABU_AUTH_SECRET` has no default on purpose — Compose refuses to start without it rather than ship a signing key that anyone reading this repo could forge access tokens with.
+
+The admin account is created on first boot and persisted in the `db-data` volume; editing `.env` afterwards will not change it.
+
+Nabu will be available at `http://localhost:8080`.
 
 ## Deployment
 
