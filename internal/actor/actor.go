@@ -1,0 +1,35 @@
+// Package actor carries the authenticated session's identity and scope through
+// the request context. It is a leaf package — context plus uuid, nothing else —
+// so that auth, audit, and rbac can all read the actor without importing each
+// other and forming a cycle.
+package actor
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
+
+// Actor is the session-derived identity every scoped query and permission check
+// resolves against. OrgID comes from the server's own resolution of the session,
+// never from client input (security-baseline.md).
+type Actor struct {
+	UserID uuid.UUID
+	OrgID  uuid.UUID
+}
+
+// A package-private struct type cannot collide with a key defined in any other
+// package, which an exported or primitive-typed key could.
+type ctxKey struct{}
+
+// NewContext returns ctx carrying a.
+func NewContext(ctx context.Context, a Actor) context.Context {
+	return context.WithValue(ctx, ctxKey{}, a)
+}
+
+// FromContext returns the actor set by the auth middleware. The bool is false
+// on public routes, which never run the auth check.
+func FromContext(ctx context.Context) (Actor, bool) {
+	a, ok := ctx.Value(ctxKey{}).(Actor)
+	return a, ok
+}
