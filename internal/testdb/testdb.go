@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -116,13 +117,21 @@ func SkipIfShort(t *testing.T) {
 	}
 }
 
-// Truncate empties tables between tests that share the one container.
+// Truncate empties tables between tests that share the one container. All
+// tables go in one statement: Postgres rejects truncating a table another
+// table still references, so truncating a foreign-key group one statement at
+// a time fails regardless of the order they're passed in.
 func Truncate(ctx context.Context, t *testing.T, pool *pgxpool.Pool, tables ...string) {
 	t.Helper()
-	for _, table := range tables {
+	if len(tables) == 0 {
+		return
+	}
+	quoted := make([]string, len(tables))
+	for i, table := range tables {
 		// A table name can't be a bind parameter; Sanitize quotes it instead.
-		if _, err := pool.Exec(ctx, "TRUNCATE "+pgx.Identifier{table}.Sanitize()); err != nil {
-			t.Fatalf("truncating %s: %v", table, err)
-		}
+		quoted[i] = pgx.Identifier{table}.Sanitize()
+	}
+	if _, err := pool.Exec(ctx, "TRUNCATE "+strings.Join(quoted, ", ")); err != nil {
+		t.Fatalf("truncating %s: %v", strings.Join(tables, ", "), err)
 	}
 }
