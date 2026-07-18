@@ -28,7 +28,14 @@ export function setOnUnauthenticated(handler: (() => void) | null) {
   onUnauthenticated = handler;
 }
 
-let inFlight: Promise<boolean> | null = null;
+/**
+ * `rejected` — the server authoritatively refused the token; `unavailable` —
+ * the attempt never got an answer (5xx, offline, DNS). Only the first is a
+ * statement about the session, so only the first may latch.
+ */
+type RefreshOutcome = "ok" | "rejected" | "unavailable";
+
+let inFlight: Promise<RefreshOutcome> | null = null;
 // Survives past inFlight settling. Clearing inFlight in .finally() alone only
 // dedupes 401s arriving *during* the refresh window; the sequence that trips
 // the server's token-reuse detection — which revokes the whole family — is
@@ -36,29 +43,33 @@ let inFlight: Promise<boolean> | null = null;
 // a second refresh.
 let refreshFailed = false;
 
-/** A successful login is the only thing that clears the failure latch. */
+/** Called on login and logout — the only things that clear the failure latch. */
 export function resetAuthState() {
   inFlight = null;
   refreshFailed = false;
 }
 
-function refreshSession(): Promise<boolean> {
+function refreshSession(): Promise<RefreshOutcome> {
   if (inFlight) return inFlight;
 
-  const attempt = (async () => {
+  const attempt = (async (): Promise<RefreshOutcome> => {
     try {
       // Exactly /api/v1/auth/refresh: the refresh cookie is scoped
       // Path=/api/v1/auth, so any other spelling omits the cookie and every
       // session dies at the access token's TTL, looking like a token bug.
       const { response } = await client.POST("/api/v1/auth/refresh");
-      if (!response.ok) {
-        refreshFailed = true;
-        return false;
+      if (response.ok) return "ok";
+      // A 502 from a deploy or a proxy hiccup says nothing about the token.
+      // Latching on it would strand every open tab out of a live session until
+      // the user logged in again, which reads as a random logout.
+      if (response.status !== 401 && response.status !== 403) {
+        return "unavailable";
       }
-      return true;
-    } catch {
       refreshFailed = true;
-      return false;
+      return "rejected";
+    } catch {
+      // Thrown, not answered: offline, DNS, connection reset.
+      return "unavailable";
     }
   })();
 
@@ -72,6 +83,11 @@ function refreshSession(): Promise<boolean> {
 // The Request handed to onResponse has already been sent, so its body stream is
 // disturbed and it cannot be replayed. Stash an unsent clone at request time,
 // correlated by the middleware's request id.
+//
+// Entries are removed in onResponse/onError, which openapi-fetch guarantees to
+// run for every onRequest — but only while this is the sole registered
+// middleware. A second one that short-circuits by returning a Response from its
+// onRequest would skip ours and leak an entry per call.
 const pendingRequests = new Map<string, Request>();
 
 const refreshMiddleware: Middleware = {
@@ -94,8 +110,11 @@ const refreshMiddleware: Middleware = {
     if (schemaPath.startsWith("/api/v1/auth/")) return;
     if (refreshFailed || !original) return;
 
-    if (!(await refreshSession())) {
-      onUnauthenticated?.();
+    const outcome = await refreshSession();
+    if (outcome !== "ok") {
+      // Only a rejection is evidence the session is gone. On `unavailable` the
+      // caller sees the original 401 and a later request can try again.
+      if (outcome === "rejected") onUnauthenticated?.();
       return;
     }
 
