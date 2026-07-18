@@ -2,15 +2,15 @@
 CREATE TABLE audit_logs (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     -- Nullable, and SET NULL rather than CASCADE: an audit row has to outlive
-    -- the user it describes, or deleting an account erases its own trail. A
-    -- failed login has no user at all (ADR-0004).
+    -- the user it describes, or deleting an account erases its own trail. An
+    -- event with no authenticated session has no user to name (ADR-0004).
     actor_id    uuid REFERENCES users (id) ON DELETE SET NULL,
     org_id      uuid NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
     -- Nullable: org-level actions (login, logout) belong to no project.
     project_id  uuid REFERENCES projects (id) ON DELETE SET NULL,
     action      text NOT NULL,
     entity_type text NOT NULL,
-    -- Nullable: a failed login names no entity that exists.
+    -- Nullable: an event may name no entity that exists.
     entity_id   uuid,
     metadata    jsonb NOT NULL DEFAULT '{}',
     created_at  timestamptz NOT NULL DEFAULT now()

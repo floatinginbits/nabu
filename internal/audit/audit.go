@@ -12,15 +12,16 @@ import (
 
 // Entry is one auditable event.
 type Entry struct {
-	// ActorID is the user responsible, absent for events that happen without
-	// an authenticated session (a failed login has no user).
+	// ActorID is the user responsible. Nullable because the column survives the
+	// user it names (ON DELETE SET NULL), and because an event that happens
+	// without an authenticated session has no user to name.
 	ActorID uuid.NullUUID
 	// OrgID scopes the row. Always set: it is what every read of this table
 	// filters on (ADR-0005).
 	OrgID uuid.UUID
 	// ProjectID is absent for org-level events such as login and logout.
 	ProjectID uuid.NullUUID
-	// Action is a dotted verb: "task.created", "auth.login_failed".
+	// Action is a dotted verb: "task.created", "auth.login".
 	Action     string
 	EntityType string
 	// EntityID is uuid.Nil when the event names no entity that exists.

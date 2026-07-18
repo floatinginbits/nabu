@@ -94,8 +94,8 @@ func newTestTask(createdAt time.Time) Task {
 // A context with no actor is a wiring bug, not client input: the service must
 // fail rather than fall through to a query scoped to the zero org, which would
 // silently return or write across every org. Asserted once, on both methods,
-// because every other case in this file supplies an actor. Create surfaces it
-// from project resolution, which is what owns the org scope it needs.
+// because every other case in this file supplies an actor. Both methods read
+// actor.FromContext directly, before touching a repository.
 func TestServiceRejectsContextWithoutActor(t *testing.T) {
 	s := newTestScope(t)
 	repo := &fakeRepo{}

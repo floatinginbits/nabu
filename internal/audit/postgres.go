@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -19,8 +20,10 @@ import (
 // path an attacker can trigger deliberately.
 const maxMetadataBytes = 8 << 10
 
-// writeTimeout bounds the insert so a stalled audit write cannot pin a request
-// goroutine after its response is already written.
+// writeTimeout bounds the insert. Record is synchronous and runs before the
+// response, so this is the ceiling on the request latency a stalled audit write
+// can add — and, because the write ignores caller cancellation, the ceiling on
+// how long it holds a pool connection after the client has hung up.
 const writeTimeout = 5 * time.Second
 
 // PostgresRecorder writes audit entries to Postgres, outside any transaction
@@ -35,9 +38,9 @@ func NewPostgresRecorder(pool *pgxpool.Pool, log *slog.Logger) *PostgresRecorder
 }
 
 func (r *PostgresRecorder) Record(ctx context.Context, e Entry) {
-	// The audit row describes work that already happened, so it must not be
-	// abandoned because the client hung up mid-response; the timeout keeps that
-	// from becoming an unbounded write.
+	// The audit row describes work that already committed, so it must not be
+	// abandoned because the client hung up; the timeout keeps a write the caller
+	// no longer waits on from running unbounded.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
 
@@ -74,6 +77,12 @@ var truncatedMetadata = []byte(`{"_truncated": true}`)
 // runtime condition — but not one worth losing the audit row over.
 var unencodableMetadata = []byte(`{"_unencodable": true}`)
 
+// escapedNUL is how json.Marshal encodes a NUL inside a string. Postgres jsonb
+// rejects that escape outright, so leaving one in place would fail the insert —
+// and because Record swallows its errors, that failure is a missing audit row
+// behind a successful response. Dropping the character keeps the row.
+var escapedNUL = []byte(`\u0000`)
+
 func encodeMetadata(m map[string]any) []byte {
 	if len(m) == 0 {
 		return []byte(`{}`)
@@ -82,6 +91,7 @@ func encodeMetadata(m map[string]any) []byte {
 	if err != nil {
 		return unencodableMetadata
 	}
+	b = bytes.ReplaceAll(b, escapedNUL, nil)
 	if len(b) > maxMetadataBytes {
 		return truncatedMetadata
 	}

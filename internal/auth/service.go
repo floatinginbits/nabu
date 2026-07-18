@@ -52,14 +52,9 @@ func NewService(users UserAuthenticator, refresh RefreshRepository, recorder aud
 func (s *Service) Login(ctx context.Context, email, password string) (TokenPair, user.User, error) {
 	u, err := s.users.Authenticate(ctx, email, password)
 	if errors.Is(err, user.ErrInvalidCredentials) {
-		// No actor and no entity: the attempt names an account that may not
-		// exist, so the attempted address is the only thing to record.
-		s.audit.Record(ctx, audit.Entry{
-			OrgID:      s.orgID,
-			Action:     "auth.login_failed",
-			EntityType: "user",
-			Metadata:   loginAuditMetadata(email),
-		})
+		// Deliberately not audited: /auth/login is reachable unauthenticated and
+		// nothing rate-limits it, so recording failures would hand an anonymous
+		// caller an unbounded append into a table with no retention (ADR-0004).
 		return TokenPair{}, user.User{}, ErrInvalidCredentials
 	}
 	if err != nil {
@@ -91,17 +86,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (TokenPair,
 	return pair, u, nil
 }
 
-// maxAuditEmailLen bounds an attacker-controlled field: a failed login records
-// whatever address was submitted, and the whole document is capped anyway, so
-// truncating here keeps one long value from displacing the rest of the entry.
-const maxAuditEmailLen = 320 // RFC 5321 maximum
-
-// loginAuditMetadata is the auth domain's allowlist. Only the address is ever
-// recorded — never the password, never a token or its hash (ADR-0004).
+// loginAuditMetadata is the auth domain's allowlist. Only the address of the
+// user who just authenticated is recorded — never the submitted address, never
+// the password, never a token or its hash (ADR-0004).
 func loginAuditMetadata(email string) map[string]any {
-	if len(email) > maxAuditEmailLen {
-		email = email[:maxAuditEmailLen]
-	}
 	return map[string]any{"email": email}
 }
 

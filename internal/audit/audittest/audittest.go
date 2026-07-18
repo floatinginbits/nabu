@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"testing"
 
 	"github.com/floatinginbits/nabu/internal/audit"
 )
@@ -22,8 +21,12 @@ import (
 // deniedSubstrings must never appear in an encoded audit entry, as a key or as
 // a value. The bcrypt and JWT prefixes catch a secret that was copied into
 // metadata under an innocent-looking key, which a key-name check alone misses.
+//
+// Deliberately not here: a bare "password". It would flag a legitimate
+// {"password_changed": true}, and the pressure to "fix" that lands on this
+// list rather than on the entry — the wrong direction for the check guarding
+// this boundary. "password_hash" and the bcrypt prefixes cover the hazard.
 var deniedSubstrings = []string{
-	"password",
 	"password_hash",
 	"$2a$", // bcrypt hash
 	"$2b$",
@@ -38,21 +41,50 @@ var deniedSubstrings = []string{
 type Recorder struct {
 	mu      sync.Mutex
 	entries []audit.Entry
+	next    audit.Recorder
+}
+
+// TB is the testing.TB subset this package needs. It is an interface rather
+// than *testing.T so the cleanup wiring below can be tested with a spy: a
+// t.Cleanup that stops being registered, or an AssertNoSecrets that stops
+// firing, is invisible to every other test in the repo, and the guarantee
+// ADR-0004 claims would be silently off.
+type TB interface {
+	Helper()
+	Cleanup(func())
+	Error(args ...any)
 }
 
 // New returns a Recorder that checks its own entries against the denylist when
 // the test finishes, so a caller gets the guarantee without opting in.
-func New(t *testing.T) *Recorder {
+func New(t TB) *Recorder {
 	t.Helper()
-	r := &Recorder{}
+	return newWithCleanup(t, nil)
+}
+
+// Tee wraps a real Recorder so a suite that needs entries to actually reach the
+// database — the end-to-end HTTP suite — still contributes them to the
+// denylist. Without it that suite is exempt from the check, and it is the one
+// where a new endpoint's first audited action shows up.
+func Tee(t TB, next audit.Recorder) *Recorder {
+	t.Helper()
+	return newWithCleanup(t, next)
+}
+
+func newWithCleanup(t TB, next audit.Recorder) *Recorder {
+	r := &Recorder{next: next}
 	t.Cleanup(func() { r.AssertNoSecrets(t) })
 	return r
 }
 
-func (r *Recorder) Record(_ context.Context, e audit.Entry) {
+func (r *Recorder) Record(ctx context.Context, e audit.Entry) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.entries = append(r.entries, e)
+	next := r.next
+	r.mu.Unlock()
+	if next != nil {
+		next.Record(ctx, e)
+	}
 }
 
 // Entries returns the entries recorded so far.
@@ -75,7 +107,7 @@ func (r *Recorder) Actions() []string {
 
 // AssertNoSecrets marshals every recorded entry's metadata and fails the test
 // if the result contains anything on the denylist.
-func (r *Recorder) AssertNoSecrets(t *testing.T) {
+func (r *Recorder) AssertNoSecrets(t TB) {
 	t.Helper()
 	for _, v := range r.violations() {
 		t.Error(v)

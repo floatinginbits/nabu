@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/floatinginbits/nabu/internal/audit"
+	"github.com/floatinginbits/nabu/internal/audit/audittest"
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/project"
@@ -95,9 +96,11 @@ func newTestServer(t *testing.T, cookieSecure bool) *testServer {
 	rec := &logRecorder{}
 	log := slog.New(rec)
 	orgID, projectID := seededScope(t)
-	// The real recorder, not a fake: this suite is the end-to-end check that an
-	// audited request actually lands a row.
-	recorder := audit.NewPostgresRecorder(testPool, log)
+	// Tee'd rather than faked: the real recorder keeps this suite's end-to-end
+	// check that an audited request actually lands a row, and the wrapper brings
+	// the suite under the ADR-0004 denylist — this is where a new endpoint's
+	// first audited action is most likely to be exercised.
+	recorder := audittest.Tee(t, audit.NewPostgresRecorder(testPool, log))
 	users := user.NewService(user.NewPostgresRepository(testPool))
 	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(testPool), recorder, []byte(testAuthSecret), orgID, log)
 	projects := project.NewService(project.NewPostgresRepository(testPool))

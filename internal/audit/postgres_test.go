@@ -102,15 +102,16 @@ func TestPostgresRecorderWritesEntry(t *testing.T) {
 	}
 }
 
-// An unauthenticated event (a failed login) has neither an actor nor an entity;
-// both columns are nullable so the row can still be written.
+// actor_id and entity_id are both nullable — the first so a row outlives the
+// user it names, the second for an event that names no entity — so an entry
+// supplying neither must still be written.
 func TestPostgresRecorderWritesActorlessEntry(t *testing.T) {
 	f := reset(t)
 	rec := NewPostgresRecorder(testPool, slog.New(&logCapture{}))
 
 	rec.Record(context.Background(), Entry{
 		OrgID:      f.orgID,
-		Action:     "auth.login_failed",
+		Action:     "auth.logout",
 		EntityType: "user",
 	})
 
@@ -200,6 +201,13 @@ func TestEncodeMetadata(t *testing.T) {
 			in:   map[string]any{"ch": make(chan int)},
 			want: string(unencodableMetadata),
 		},
+		{
+			// json.Marshal emits an escaped NUL happily and jsonb refuses it, so an
+			// unscrubbed NUL is a swallowed insert failure — a 200 with no row.
+			name: "NUL is scrubbed",
+			in:   map[string]any{"title": "a\x00b"},
+			want: `{"title":"ab"}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -229,6 +237,29 @@ func TestPostgresRecorderStoresTruncatedMarker(t *testing.T) {
 	}
 	if stored["_truncated"] != true {
 		t.Errorf("stored metadata = %v, want the truncation marker", stored)
+	}
+}
+
+// Metadata carrying a NUL must still land a row. Postgres rejects the escape
+// inside jsonb, and Record swallows the error, so an unscrubbed NUL means a
+// successful response with nothing audited.
+func TestPostgresRecorderStoresMetadataWithNUL(t *testing.T) {
+	f := reset(t)
+
+	NewPostgresRecorder(testPool, slog.New(&logCapture{})).Record(context.Background(), Entry{
+		OrgID:      f.orgID,
+		Action:     "task.created",
+		EntityType: "task",
+		EntityID:   uuid.New(),
+		Metadata:   map[string]any{"title": "before\x00after"},
+	})
+
+	var stored map[string]any
+	if err := json.Unmarshal(onlyRow(t).metadata, &stored); err != nil {
+		t.Fatalf("stored metadata is not JSON: %v", err)
+	}
+	if stored["title"] != "beforeafter" {
+		t.Errorf("stored metadata = %v, want the title with the NUL removed", stored)
 	}
 }
 

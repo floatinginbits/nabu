@@ -475,8 +475,7 @@ func TestServiceLogout(t *testing.T) {
 }
 
 // Auth events are recorded with an explicitly supplied actor: login and logout
-// run unauthenticated, so there is no actor in the context, and a failed login
-// has no user at all.
+// run unauthenticated, so there is no actor in the context to read one from.
 func TestServiceAuthAudit(t *testing.T) {
 	ctx := context.Background()
 	seeded := user.User{
@@ -513,18 +512,16 @@ func TestServiceAuthAudit(t *testing.T) {
 			},
 		},
 		{
-			name:  "failed login has no actor and no entity",
-			users: &fakeUsers{err: user.ErrInvalidCredentials},
-			repo:  &fakeRefresh{},
+			// Failed logins are deliberately unaudited until a login rate limit
+			// exists: the endpoint is public, so an attacker-driven loop would
+			// otherwise append a row per attempt forever (ADR-0004).
+			name:    "failed login records nothing",
+			users:   &fakeUsers{err: user.ErrInvalidCredentials},
+			repo:    &fakeRefresh{},
+			wantNil: true,
 			call: func(_ *testing.T, svc *Service) error {
 				_, _, err := svc.Login(ctx, "mallory@example.com", "wrong")
 				return err
-			},
-			want: audit.Entry{
-				OrgID:      testOrgID,
-				Action:     "auth.login_failed",
-				EntityType: "user",
-				Metadata:   map[string]any{"email": "mallory@example.com"},
 			},
 		},
 		{
@@ -585,15 +582,5 @@ func TestServiceAuthAudit(t *testing.T) {
 				t.Errorf("audit entry = %+v, want %+v", entries[0], tt.want)
 			}
 		})
-	}
-}
-
-// The submitted address is attacker-controlled on a failed login, so it is
-// bounded before it reaches an unbounded JSONB column.
-func TestLoginAuditMetadataTruncatesEmail(t *testing.T) {
-	long := strings.Repeat("a", maxAuditEmailLen+50)
-	got := loginAuditMetadata(long)["email"].(string)
-	if len(got) != maxAuditEmailLen {
-		t.Errorf("recorded email length = %d, want %d", len(got), maxAuditEmailLen)
 	}
 }
