@@ -28,7 +28,7 @@ function messageFor(error: Error): string {
 }
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, logoutFailed } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -76,6 +76,14 @@ export function LoginPage() {
                 required
               />
             </div>
+            {/* The sign-out cleared this browser either way; the server may
+                still hold the session, which only signing in again resolves. */}
+            {logoutFailed && !submit.isError && (
+              <p role="alert" className="text-destructive text-sm">
+                We signed you out here, but the server didn’t confirm it. Sign
+                in again to be sure.
+              </p>
+            )}
             {submit.isError && (
               <p role="alert" className="text-destructive text-sm">
                 {messageFor(submit.error)}
