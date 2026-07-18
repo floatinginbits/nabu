@@ -82,6 +82,9 @@ type Project struct {
 // ProjectList defines model for ProjectList.
 type ProjectList struct {
 	Data []Project `json:"data"`
+
+	// NextCursor Always null. Projects are a bounded per-org collection, so the endpoint is not paginated yet; the field is present so every list response carries the same envelope.
+	NextCursor *string `json:"nextCursor"`
 }
 
 // Task defines model for Task.

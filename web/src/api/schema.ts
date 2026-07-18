@@ -172,6 +172,8 @@ export interface components {
         };
         ProjectList: {
             data: components["schemas"]["Project"][];
+            /** @description Always null. Projects are a bounded per-org collection, so the endpoint is not paginated yet; the field is present so every list response carries the same envelope. */
+            nextCursor: string | null;
         };
         Task: {
             /** Format: uuid */

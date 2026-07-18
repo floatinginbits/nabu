@@ -59,7 +59,7 @@ function stubApi(initialTasks: Task[]) {
     const request = input;
     const path = new URL(request.url).pathname;
     if (path === "/api/v1/projects" && request.method === "GET") {
-      return jsonResponse({ data: projects });
+      return jsonResponse({ data: projects, nextCursor: null });
     }
     if (path === "/api/v1/tasks" && request.method === "GET") {
       return jsonResponse({ data: tasks, nextCursor: null });

@@ -241,12 +241,19 @@ components:
 
     ProjectList:
       type: object
-      required: [data]
+      required: [data, nextCursor]
       properties:
         data:
           type: array
           items:
             $ref: "#/components/schemas/Project"
+        nextCursor:
+          type: string
+          nullable: true
+          description: >
+            Always null. Projects are a bounded per-org collection, so the
+            endpoint is not paginated yet; the field is present so every list
+            response carries the same envelope.
 
     Task:
       type: object
