@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/floatinginbits/nabu/internal/audit"
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/config"
 	nabuhttp "github.com/floatinginbits/nabu/internal/http"
@@ -78,8 +79,9 @@ func run() error {
 	}
 	projects := project.NewService(projectRepo)
 
-	tasks := task.NewService(task.NewPostgresRepository(pool), projects)
-	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(pool), []byte(cfg.AuthSecret), log)
+	recorder := audit.NewPostgresRecorder(pool, log)
+	tasks := task.NewService(task.NewPostgresRepository(pool), projects, recorder)
+	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(pool), recorder, []byte(cfg.AuthSecret), orgID, log)
 
 	handler, err := nabuhttp.NewHandler(nabuhttp.Deps{
 		Log:          log,

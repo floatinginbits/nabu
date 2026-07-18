@@ -11,4 +11,5 @@ Each record is `NNNN-short-title.md`, numbered sequentially. Use `0000-template.
 - [0001](0001-database-access-pattern.md) — Database access pattern: sqlc + goose — **Accepted**
 - [0002](0002-frontend-styling.md) — Frontend styling: shadcn/ui (Tailwind + Radix) — **Accepted**
 - [0003](0003-auth-session-design.md) — Session and token design for local authentication — **Accepted**
+- [0004](0004-audit-logging.md) — Best-effort audit logging at the service layer — **Accepted**
 - [0005](0005-organization-scoping.md) — Organization scoping: a singleton org from day one — **Accepted**

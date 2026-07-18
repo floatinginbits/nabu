@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/floatinginbits/nabu/internal/audit/audittest"
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/project"
@@ -48,8 +49,8 @@ func newTestHandler(t *testing.T) (http.Handler, *logRecorder) {
 	log := slog.New(rec)
 	h, err := NewHandler(Deps{
 		Log:   log,
-		Tasks: task.NewService(stubRepo{}, stubProjects{}),
-		Auth:  auth.NewService(nil, nil, []byte(testAuthSecret), log),
+		Tasks: task.NewService(stubRepo{}, stubProjects{}, audittest.New(t)),
+		Auth:  auth.NewService(nil, nil, audittest.New(t), []byte(testAuthSecret), uuid.New(), log),
 		// Users is only reached by GET /users/me, which these tests don't call;
 		// the auth_test.go integration tests cover it against real Postgres.
 		Users:        nil,
@@ -70,8 +71,8 @@ func TestNewHandlerRequiresOrgID(t *testing.T) {
 	log := slog.New(&logRecorder{})
 	h, err := NewHandler(Deps{
 		Log:   log,
-		Tasks: task.NewService(stubRepo{}, stubProjects{}),
-		Auth:  auth.NewService(nil, nil, []byte(testAuthSecret), log),
+		Tasks: task.NewService(stubRepo{}, stubProjects{}, audittest.New(t)),
+		Auth:  auth.NewService(nil, nil, audittest.New(t), []byte(testAuthSecret), uuid.New(), log),
 	})
 	if err == nil {
 		t.Fatal("NewHandler() with a zero OrgID returned no error")

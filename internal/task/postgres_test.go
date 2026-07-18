@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/floatinginbits/nabu/internal/actor"
+	"github.com/floatinginbits/nabu/internal/audit"
+	"github.com/floatinginbits/nabu/internal/audit/audittest"
 	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/testdb"
 )
@@ -68,7 +71,7 @@ func reset(t *testing.T) fixture {
 	if _, err := testPool.Exec(ctx, "DELETE FROM projects WHERE lower(key) <> 'gen'"); err != nil {
 		t.Fatalf("deleting test projects: %v", err)
 	}
-	testdb.Truncate(ctx, t, testPool, "tasks")
+	testdb.Truncate(ctx, t, testPool, "tasks", "audit_logs")
 
 	var f fixture
 	row := testPool.QueryRow(ctx, "SELECT id, org_id FROM projects WHERE lower(key) = 'gen'")
@@ -84,8 +87,10 @@ func (f fixture) actorCtx() context.Context {
 	return actor.NewContext(context.Background(), actor.Actor{UserID: uuid.New(), OrgID: f.orgID})
 }
 
-func newTestService() *Service {
-	return NewService(NewPostgresRepository(testPool), project.NewService(project.NewPostgresRepository(testPool)))
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	return NewService(NewPostgresRepository(testPool),
+		project.NewService(project.NewPostgresRepository(testPool)), audittest.New(t))
 }
 
 // seedTasks inserts tasks with explicit created_at spacing so ordering is
@@ -219,7 +224,7 @@ func TestPostgresListScoping(t *testing.T) {
 func TestPostgresCursorPagination(t *testing.T) {
 	f := reset(t)
 	ctx := f.actorCtx()
-	svc := newTestService()
+	svc := newTestService(t)
 
 	seedTasks(t, f.projectID, 5)
 
@@ -256,7 +261,7 @@ func TestPostgresCursorPagination(t *testing.T) {
 func TestPostgresPaginationExactPageBoundary(t *testing.T) {
 	f := reset(t)
 	ctx := f.actorCtx()
-	svc := newTestService()
+	svc := newTestService(t)
 
 	seedTasks(t, f.projectID, 4)
 
@@ -385,4 +390,93 @@ func explainLast(t *testing.T) string {
 		t.Fatalf("reading plan: %v", err)
 	}
 	return plan.String()
+}
+
+// The audit trail is best-effort: an audit write that fails must not fail the
+// state change it describes (ADR-0004). The failure here is a real one rather
+// than a stubbed error — the actor is a user id that does not exist, so the
+// audit row violates its actor_id foreign key against real Postgres.
+func TestPostgresCreateSurvivesAuditFailure(t *testing.T) {
+	f := reset(t)
+	logs := &logCapture{}
+	svc := NewService(
+		NewPostgresRepository(testPool),
+		project.NewService(project.NewPostgresRepository(testPool)),
+		audit.NewPostgresRecorder(testPool, slog.New(logs)),
+	)
+
+	created, err := svc.Create(f.actorCtx(), f.projectID, "survives a broken audit trail")
+	if err != nil {
+		t.Fatalf("Create() error = %v, want the task despite the audit failure", err)
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		"SELECT count(*) FROM tasks WHERE id = $1", created.ID).Scan(&count); err != nil {
+		t.Fatalf("counting tasks: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("task rows = %d, want the task committed even though its audit row was not", count)
+	}
+	if n := auditRowCount(t); n != 0 {
+		t.Fatalf("audit rows = %d, want 0 — the test's premise is that the insert fails", n)
+	}
+
+	rec, ok := logs.find("recording audit entry")
+	if !ok {
+		t.Fatal("audit failure was not logged; a silently dropped audit row is indistinguishable from no action")
+	}
+	// The failure log must not carry metadata: redacting it at the column and
+	// then printing it into a log pipeline that leaves the host redacts nothing.
+	for key := range rec {
+		if key == "metadata" {
+			t.Errorf("audit failure log contains metadata: %v", rec)
+		}
+	}
+	if rec["action"] != "task.created" {
+		t.Errorf("audit failure log action = %v, want task.created", rec["action"])
+	}
+}
+
+func auditRowCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM audit_logs").Scan(&n); err != nil {
+		t.Fatalf("counting audit rows: %v", err)
+	}
+	return n
+}
+
+// logCapture collects slog records as attribute maps.
+type logCapture struct {
+	mu      sync.Mutex
+	records []map[string]any
+}
+
+func (l *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+
+func (l *logCapture) Handle(_ context.Context, r slog.Record) error {
+	attrs := map[string]any{"msg": r.Message}
+	r.Attrs(func(a slog.Attr) bool {
+		attrs[a.Key] = a.Value.Any()
+		return true
+	})
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.records = append(l.records, attrs)
+	return nil
+}
+
+func (l *logCapture) WithAttrs([]slog.Attr) slog.Handler { return l }
+func (l *logCapture) WithGroup(string) slog.Handler      { return l }
+
+func (l *logCapture) find(msg string) (map[string]any, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range l.records {
+		if r["msg"] == msg {
+			return r, true
+		}
+	}
+	return nil, false
 }

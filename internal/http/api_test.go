@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/floatinginbits/nabu/internal/audit"
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/project"
@@ -68,7 +69,7 @@ type testServer struct {
 func newAPIHandler(t *testing.T) *testServer {
 	t.Helper()
 	testdb.SkipIfShort(t)
-	testdb.Truncate(context.Background(), t, testPool, "tasks")
+	testdb.Truncate(context.Background(), t, testPool, "tasks", "audit_logs")
 	return newTestServer(t, false)
 }
 
@@ -94,12 +95,15 @@ func newTestServer(t *testing.T, cookieSecure bool) *testServer {
 	rec := &logRecorder{}
 	log := slog.New(rec)
 	orgID, projectID := seededScope(t)
+	// The real recorder, not a fake: this suite is the end-to-end check that an
+	// audited request actually lands a row.
+	recorder := audit.NewPostgresRecorder(testPool, log)
 	users := user.NewService(user.NewPostgresRepository(testPool))
-	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(testPool), []byte(testAuthSecret), log)
+	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(testPool), recorder, []byte(testAuthSecret), orgID, log)
 	projects := project.NewService(project.NewPostgresRepository(testPool))
 	h, err := NewHandler(Deps{
 		Log:          log,
-		Tasks:        task.NewService(task.NewPostgresRepository(testPool), projects),
+		Tasks:        task.NewService(task.NewPostgresRepository(testPool), projects, recorder),
 		Projects:     projects,
 		Auth:         authSvc,
 		Users:        users,
@@ -215,6 +219,43 @@ func TestCreateTaskEndpoint(t *testing.T) {
 	}
 	if created.CreatedAt.IsZero() {
 		t.Error("createdAt is zero")
+	}
+}
+
+// End to end: a request that changes state leaves an audit row scoped to the
+// session's org, project, and user — none of which the request supplies.
+func TestCreateTaskEndpointRecordsAudit(t *testing.T) {
+	h := newAPIHandler(t)
+
+	w, _ := doJSON(t, h, http.MethodPost, "/api/v1/tasks", h.createTaskBody("audited"))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", w.Code, w.Body.String())
+	}
+	var created api.Task
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decoding task: %v", err)
+	}
+
+	var (
+		action    string
+		actorID   uuid.UUID
+		projectID uuid.UUID
+		entityID  uuid.UUID
+	)
+	err := testPool.QueryRow(context.Background(),
+		`SELECT action, actor_id, project_id, entity_id FROM audit_logs WHERE action = 'task.created'`).
+		Scan(&action, &actorID, &projectID, &entityID)
+	if err != nil {
+		t.Fatalf("reading the audit row for the created task: %v", err)
+	}
+	if entityID != created.Id {
+		t.Errorf("audit entity_id = %v, want the created task %v", entityID, created.Id)
+	}
+	if projectID != h.projectID {
+		t.Errorf("audit project_id = %v, want %v", projectID, h.projectID)
+	}
+	if actorID != testUserID {
+		t.Errorf("audit actor_id = %v, want the session user %v", actorID, testUserID)
 	}
 }
 

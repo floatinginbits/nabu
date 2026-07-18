@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/floatinginbits/nabu/internal/audit"
+	"github.com/floatinginbits/nabu/internal/audit/audittest"
 	"github.com/floatinginbits/nabu/internal/user"
 )
 
@@ -70,6 +73,7 @@ type fakeRefresh struct {
 	rotates       []rotateCall
 
 	revokeErr    error
+	revokeUserID uuid.NullUUID
 	revokeHashes [][]byte
 }
 
@@ -95,15 +99,29 @@ func (f *fakeRefresh) Rotate(_ context.Context, presentedHash, newHash []byte, n
 	return f.rotateRow, f.rotateOutcome, nil
 }
 
-func (f *fakeRefresh) RevokeFamilyByHash(_ context.Context, tokenHash []byte) error {
+func (f *fakeRefresh) RevokeFamilyByHash(_ context.Context, tokenHash []byte) (uuid.NullUUID, error) {
 	f.revokeHashes = append(f.revokeHashes, tokenHash)
-	return f.revokeErr
+	if f.revokeErr != nil {
+		return uuid.NullUUID{}, f.revokeErr
+	}
+	return f.revokeUserID, nil
 }
 
+// testOrgID stands in for the org the deployment resolves at startup; auth runs
+// unauthenticated, so it comes from wiring rather than from a session actor.
+var testOrgID = uuid.New()
+
 // newTestService wires a Service on the fakes with the clock pinned to testNow.
+// Its audit recorder is checked against the secret denylist when the test ends
+// (ADR-0004), so every entry any case in this package produces is covered.
 func newTestService(t *testing.T, users *fakeUsers, refresh *fakeRefresh) *Service {
 	t.Helper()
-	s := NewService(users, refresh, testSecret, slog.New(slog.DiscardHandler))
+	return newTestServiceWithAudit(t, users, refresh, audittest.New(t))
+}
+
+func newTestServiceWithAudit(t *testing.T, users *fakeUsers, refresh *fakeRefresh, recorder *audittest.Recorder) *Service {
+	t.Helper()
+	s := NewService(users, refresh, recorder, testSecret, testOrgID, slog.New(slog.DiscardHandler))
 	s.now = func() time.Time { return testNow }
 	return s
 }
@@ -454,4 +472,128 @@ func TestServiceLogout(t *testing.T) {
 			t.Fatalf("Logout() error = %v, want errors.Is(_, errDBDown)", err)
 		}
 	})
+}
+
+// Auth events are recorded with an explicitly supplied actor: login and logout
+// run unauthenticated, so there is no actor in the context, and a failed login
+// has no user at all.
+func TestServiceAuthAudit(t *testing.T) {
+	ctx := context.Background()
+	seeded := user.User{
+		ID:           uuid.New(),
+		Email:        "alice@example.com",
+		DisplayName:  "Alice",
+		PasswordHash: "$2a$12$not-a-real-hash",
+	}
+	const password = "open sesame 123"
+
+	tests := []struct {
+		name    string
+		call    func(t *testing.T, svc *Service) error
+		users   *fakeUsers
+		repo    *fakeRefresh
+		want    audit.Entry
+		wantNil bool // no entry at all
+	}{
+		{
+			name:  "login",
+			users: &fakeUsers{user: seeded},
+			repo:  &fakeRefresh{},
+			call: func(_ *testing.T, svc *Service) error {
+				_, _, err := svc.Login(ctx, seeded.Email, password)
+				return err
+			},
+			want: audit.Entry{
+				ActorID:    uuid.NullUUID{UUID: seeded.ID, Valid: true},
+				OrgID:      testOrgID,
+				Action:     "auth.login",
+				EntityType: "user",
+				EntityID:   seeded.ID,
+				Metadata:   map[string]any{"email": seeded.Email},
+			},
+		},
+		{
+			name:  "failed login has no actor and no entity",
+			users: &fakeUsers{err: user.ErrInvalidCredentials},
+			repo:  &fakeRefresh{},
+			call: func(_ *testing.T, svc *Service) error {
+				_, _, err := svc.Login(ctx, "mallory@example.com", "wrong")
+				return err
+			},
+			want: audit.Entry{
+				OrgID:      testOrgID,
+				Action:     "auth.login_failed",
+				EntityType: "user",
+				Metadata:   map[string]any{"email": "mallory@example.com"},
+			},
+		},
+		{
+			name:  "logout names the revoked session's user",
+			users: &fakeUsers{},
+			repo:  &fakeRefresh{revokeUserID: uuid.NullUUID{UUID: seeded.ID, Valid: true}},
+			call: func(_ *testing.T, svc *Service) error {
+				return svc.Logout(ctx, "some-refresh-token")
+			},
+			want: audit.Entry{
+				ActorID:    uuid.NullUUID{UUID: seeded.ID, Valid: true},
+				OrgID:      testOrgID,
+				Action:     "auth.logout",
+				EntityType: "user",
+				EntityID:   seeded.ID,
+			},
+		},
+		{
+			// Nothing was revoked, so there is no session to report ending —
+			// otherwise every stale cookie a browser replays writes an
+			// actorless row.
+			name:    "logout of an unknown token records nothing",
+			users:   &fakeUsers{},
+			repo:    &fakeRefresh{},
+			call:    func(_ *testing.T, svc *Service) error { return svc.Logout(ctx, "unknown") },
+			wantNil: true,
+		},
+		{
+			name:    "a login that fails after authentication records nothing",
+			users:   &fakeUsers{user: seeded},
+			repo:    &fakeRefresh{createErr: errDBDown},
+			wantNil: true,
+			call: func(_ *testing.T, svc *Service) error {
+				_, _, err := svc.Login(ctx, seeded.Email, password)
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := audittest.New(t)
+			svc := newTestServiceWithAudit(t, tt.users, tt.repo, rec)
+			// The call's own error is asserted by the tests above; here only
+			// the resulting audit entry matters.
+			_ = tt.call(t, svc)
+
+			entries := rec.Entries()
+			if tt.wantNil {
+				if len(entries) != 0 {
+					t.Fatalf("recorded %d audit entries, want 0: %+v", len(entries), entries)
+				}
+				return
+			}
+			if len(entries) != 1 {
+				t.Fatalf("recorded %d audit entries, want 1", len(entries))
+			}
+			if !reflect.DeepEqual(entries[0], tt.want) {
+				t.Errorf("audit entry = %+v, want %+v", entries[0], tt.want)
+			}
+		})
+	}
+}
+
+// The submitted address is attacker-controlled on a failed login, so it is
+// bounded before it reaches an unbounded JSONB column.
+func TestLoginAuditMetadataTruncatesEmail(t *testing.T) {
+	long := strings.Repeat("a", maxAuditEmailLen+50)
+	got := loginAuditMetadata(long)["email"].(string)
+	if len(got) != maxAuditEmailLen {
+		t.Errorf("recorded email length = %d, want %d", len(got), maxAuditEmailLen)
+	}
 }

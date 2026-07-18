@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/floatinginbits/nabu/internal/actor"
+	"github.com/floatinginbits/nabu/internal/audit/audittest"
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 )
@@ -139,7 +140,7 @@ func TestRequireAuth(t *testing.T) {
 // nothing rather than fail.
 func TestRequireAuthPopulatesActor(t *testing.T) {
 	log := slog.New(&logRecorder{})
-	authsvc := auth.NewService(nil, nil, []byte(testAuthSecret), log)
+	authsvc := auth.NewService(nil, nil, audittest.New(t), []byte(testAuthSecret), uuid.New(), log)
 	userID, orgID := uuid.New(), uuid.New()
 
 	var got actor.Actor
@@ -170,7 +171,7 @@ func TestRequireAuthPopulatesActor(t *testing.T) {
 // an actor is present.
 func TestRequireAuthLeavesPublicRoutesWithoutAnActor(t *testing.T) {
 	log := slog.New(&logRecorder{})
-	authsvc := auth.NewService(nil, nil, []byte(testAuthSecret), log)
+	authsvc := auth.NewService(nil, nil, audittest.New(t), []byte(testAuthSecret), uuid.New(), log)
 
 	var ok bool
 	h := requireAuth(authsvc, uuid.New())(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {

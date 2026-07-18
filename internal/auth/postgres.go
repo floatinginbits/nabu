@@ -118,11 +118,16 @@ func (r *PostgresRefreshRepository) Rotate(ctx context.Context, presentedHash, n
 	return fromRow(succ), RotateOK, nil
 }
 
-func (r *PostgresRefreshRepository) RevokeFamilyByHash(ctx context.Context, tokenHash []byte) error {
-	if err := r.q.RevokeRefreshTokenFamilyByHash(ctx, tokenHash); err != nil {
-		return fmt.Errorf("revoking family by hash: %w", err)
+func (r *PostgresRefreshRepository) RevokeFamilyByHash(ctx context.Context, tokenHash []byte) (uuid.NullUUID, error) {
+	userIDs, err := r.q.RevokeRefreshTokenFamilyByHash(ctx, tokenHash)
+	if err != nil {
+		return uuid.NullUUID{}, fmt.Errorf("revoking family by hash: %w", err)
 	}
-	return nil
+	if len(userIDs) == 0 {
+		return uuid.NullUUID{}, nil
+	}
+	// Every row in a family belongs to the same user.
+	return uuid.NullUUID{UUID: userIDs[0], Valid: true}, nil
 }
 
 func fromRow(row sqlcgen.RefreshToken) RefreshToken {
