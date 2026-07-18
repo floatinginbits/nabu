@@ -16,6 +16,7 @@ import (
 
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
+	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/task"
 	"github.com/floatinginbits/nabu/internal/testdb"
 	"github.com/floatinginbits/nabu/internal/user"
@@ -58,6 +59,9 @@ type testServer struct {
 	http.Handler
 	auth *auth.Service
 	log  *logRecorder
+	// projectID is the seeded 'GEN' project every task in these tests is
+	// created in; requests carry it as CreateTaskRequest.projectId.
+	projectID uuid.UUID
 }
 
 // newAPIHandler builds the production handler over a clean tasks table.
@@ -68,6 +72,20 @@ func newAPIHandler(t *testing.T) *testServer {
 	return newTestServer(t, false)
 }
 
+// seededScope reads the org and default project migration 00004 creates. They
+// are resolved from the database rather than hardcoded so a change to the
+// seed's identifiers surfaces as a migration change, not as tests quietly
+// querying an org that no longer exists.
+func seededScope(t *testing.T) (orgID, projectID uuid.UUID) {
+	t.Helper()
+	row := testPool.QueryRow(context.Background(),
+		"SELECT id, org_id FROM projects WHERE lower(key) = 'gen'")
+	if err := row.Scan(&projectID, &orgID); err != nil {
+		t.Fatalf("resolving the seeded project: %v", err)
+	}
+	return orgID, projectID
+}
+
 // newTestServer wires the production handler against the test database.
 // cookieSecure mirrors Deps.CookieSecure (NABU_COOKIE_SECURE).
 func newTestServer(t *testing.T, cookieSecure bool) *testServer {
@@ -75,16 +93,23 @@ func newTestServer(t *testing.T, cookieSecure bool) *testServer {
 	testdb.SkipIfShort(t)
 	rec := &logRecorder{}
 	log := slog.New(rec)
+	orgID, projectID := seededScope(t)
 	users := user.NewService(user.NewPostgresRepository(testPool))
 	authSvc := auth.NewService(users, auth.NewPostgresRefreshRepository(testPool), []byte(testAuthSecret), log)
-	h := NewHandler(Deps{
+	projects := project.NewService(project.NewPostgresRepository(testPool))
+	h, err := NewHandler(Deps{
 		Log:          log,
-		Tasks:        task.NewService(task.NewPostgresRepository(testPool)),
+		Tasks:        task.NewService(task.NewPostgresRepository(testPool), projects),
+		Projects:     projects,
 		Auth:         authSvc,
 		Users:        users,
 		CookieSecure: cookieSecure,
+		OrgID:        orgID,
 	})
-	return &testServer{Handler: h, auth: authSvc, log: rec}
+	if err != nil {
+		t.Fatalf("NewHandler() error: %v", err)
+	}
+	return &testServer{Handler: h, auth: authSvc, log: rec, projectID: projectID}
 }
 
 var (
@@ -162,10 +187,16 @@ func assertErrorCode(t *testing.T, w *httptest.ResponseRecorder, wantStatus int,
 	}
 }
 
+// createTaskBody builds a valid CreateTaskRequest in the seeded project, so a
+// test that is not about the project field doesn't have to restate it.
+func (ts *testServer) createTaskBody(title string) string {
+	return fmt.Sprintf(`{"title":%q,"projectId":%q}`, title, ts.projectID)
+}
+
 func TestCreateTaskEndpoint(t *testing.T) {
 	h := newAPIHandler(t)
 
-	w, _ := doJSON(t, h, http.MethodPost, "/api/v1/tasks", `{"title":"Ship the walking skeleton"}`)
+	w, _ := doJSON(t, h, http.MethodPost, "/api/v1/tasks", h.createTaskBody("Ship the walking skeleton"))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (body: %s)", w.Code, w.Body.String())
 	}
@@ -178,6 +209,9 @@ func TestCreateTaskEndpoint(t *testing.T) {
 	}
 	if created.Id.String() == "00000000-0000-0000-0000-000000000000" {
 		t.Error("created task has zero id")
+	}
+	if created.ProjectId != h.projectID {
+		t.Errorf("created projectId = %v, want the seeded project %v", created.ProjectId, h.projectID)
 	}
 	if created.CreatedAt.IsZero() {
 		t.Error("createdAt is zero")
@@ -192,10 +226,14 @@ func TestCreateTaskValidation(t *testing.T) {
 		body       string
 		wantStatus int
 	}{
-		{"empty title", `{"title":""}`, http.StatusUnprocessableEntity},
-		{"whitespace title", `{"title":"   "}`, http.StatusUnprocessableEntity},
+		{"empty title", h.createTaskBody(""), http.StatusUnprocessableEntity},
+		{"whitespace title", h.createTaskBody("   "), http.StatusUnprocessableEntity},
 		{"malformed json", `{"title":`, http.StatusBadRequest},
-		{"title too long", fmt.Sprintf(`{"title":%q}`, strings.Repeat("x", 501)), http.StatusUnprocessableEntity},
+		{"title too long", h.createTaskBody(strings.Repeat("x", 501)), http.StatusUnprocessableEntity},
+		// A projectId the session's org cannot see is rejected as unknown, not
+		// as forbidden: it must not confirm the project exists elsewhere.
+		{"project in another org", fmt.Sprintf(`{"title":"x","projectId":%q}`, uuid.New()), http.StatusUnprocessableEntity},
+		{"missing projectId", `{"title":"x"}`, http.StatusUnprocessableEntity},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -222,7 +260,7 @@ func TestListTasksEndpoint(t *testing.T) {
 	})
 
 	for i := 1; i <= 3; i++ {
-		w, _ := doJSON(t, h, http.MethodPost, "/api/v1/tasks", fmt.Sprintf(`{"title":"task %d"}`, i))
+		w, _ := doJSON(t, h, http.MethodPost, "/api/v1/tasks", h.createTaskBody(fmt.Sprintf("task %d", i)))
 		if w.Code != http.StatusCreated {
 			t.Fatalf("seeding task %d: status %d", i, w.Code)
 		}
@@ -275,6 +313,33 @@ func TestListTasksEndpoint(t *testing.T) {
 		}
 	})
 
+	// projectId narrows within the session's org; an id outside it matches
+	// nothing rather than reaching across the org boundary.
+	t.Run("project filter", func(t *testing.T) {
+		w, _ := doJSON(t, h, http.MethodGet, "/api/v1/tasks?projectId="+h.projectID.String(), "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+		}
+		var page api.TaskList
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decoding page: %v", err)
+		}
+		if len(page.Data) != 3 {
+			t.Errorf("tasks in the seeded project = %d, want 3", len(page.Data))
+		}
+
+		w, _ = doJSON(t, h, http.MethodGet, "/api/v1/tasks?projectId="+uuid.New().String(), "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+			t.Fatalf("decoding page: %v", err)
+		}
+		if len(page.Data) != 0 {
+			t.Errorf("tasks for an unknown project = %d, want 0", len(page.Data))
+		}
+	})
+
 	t.Run("invalid params", func(t *testing.T) {
 		w, _ := doJSON(t, h, http.MethodGet, "/api/v1/tasks?pageSize=abc", "")
 		assertErrorCode(t, w, http.StatusBadRequest, "VALIDATION_ERROR")
@@ -285,4 +350,25 @@ func TestListTasksEndpoint(t *testing.T) {
 		w, _ = doJSON(t, h, http.MethodGet, "/api/v1/tasks?status=bogus", "")
 		assertErrorCode(t, w, http.StatusUnprocessableEntity, "VALIDATION_ERROR")
 	})
+}
+
+// GET /api/v1/projects lists the caller's org only, which for v1's singleton
+// org is the seeded 'GEN' project.
+func TestListProjectsEndpoint(t *testing.T) {
+	h := newAPIHandler(t)
+
+	w, _ := doJSON(t, h, http.MethodGet, "/api/v1/projects", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	var list api.ProjectList
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decoding projects: %v", err)
+	}
+	if len(list.Data) != 1 {
+		t.Fatalf("got %d projects, want the seeded one", len(list.Data))
+	}
+	if list.Data[0].Id != h.projectID || list.Data[0].Key != "GEN" {
+		t.Errorf("project = %+v, want the seeded GEN project %v", list.Data[0], h.projectID)
+	}
 }
