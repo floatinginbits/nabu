@@ -6,9 +6,9 @@ CREATE TABLE organizations (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- v1 is single-org (ARCHITECTURE.md). The column exists on every scoped table
--- so multi-tenancy becomes a feature rather than a backfill; this index makes
--- the singleton a schema guarantee instead of a convention nobody enforces.
+-- v1 is single-org (ADR-0005). The column exists on every scoped table so
+-- multi-tenancy becomes a feature rather than a backfill; this index makes the
+-- singleton a schema guarantee instead of a convention nobody enforces.
 CREATE UNIQUE INDEX organizations_singleton_idx ON organizations ((true));
 
 INSERT INTO organizations (name) VALUES ('Default');
