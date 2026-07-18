@@ -2,19 +2,15 @@ package task
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/floatinginbits/nabu/internal/store"
+	"github.com/floatinginbits/nabu/internal/testdb"
 )
 
 // Shared across all integration tests in this package; set up in TestMain.
@@ -24,51 +20,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	flag.Parse()
-	if testing.Short() {
-		os.Exit(m.Run())
-	}
-	code, err := runWithPostgres(m)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	os.Exit(code)
-}
-
-func runWithPostgres(m *testing.M) (int, error) {
-	ctx := context.Background()
-	container, err := tcpostgres.Run(ctx, "postgres:17-alpine",
-		tcpostgres.WithDatabase("nabu_test"),
-		tcpostgres.WithUsername("nabu"),
-		tcpostgres.WithPassword("nabu"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		return 0, fmt.Errorf("starting postgres container: %w", err)
-	}
-	defer func() { _ = testcontainers.TerminateContainer(container) }()
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		return 0, fmt.Errorf("getting connection string: %w", err)
-	}
-	if err := store.Migrate(ctx, dsn); err != nil {
-		return 0, fmt.Errorf("migrating test database: %w", err)
-	}
-
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		return 0, fmt.Errorf("parsing pool config: %w", err)
-	}
-	cfg.ConnConfig.Tracer = testCapture
-	testPool, err = pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return 0, fmt.Errorf("creating pool: %w", err)
-	}
-	defer testPool.Close()
-
-	return m.Run(), nil
+	testdb.Main(m, &testPool, testdb.WithTracer(testCapture))
 }
 
 // queryCapture records the last SQL + args the repository sent, so the
@@ -98,12 +50,8 @@ func (c *queryCapture) last() (string, []any) {
 // truncateTasks resets table state between tests (one shared container).
 func truncateTasks(t *testing.T) {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test; -short set")
-	}
-	if _, err := testPool.Exec(context.Background(), "TRUNCATE tasks"); err != nil {
-		t.Fatalf("truncating tasks: %v", err)
-	}
+	testdb.SkipIfShort(t)
+	testdb.Truncate(context.Background(), t, testPool, "tasks")
 }
 
 func TestPostgresCreateAndList(t *testing.T) {
