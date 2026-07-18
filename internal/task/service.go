@@ -30,16 +30,11 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string { return e.Msg }
 
-// ErrNoActor means a task operation ran without a session actor in the
-// context. Every task route sits behind requireAuth, so this is a wiring bug,
-// not a client error — it surfaces as a 500, never as an unscoped query.
-var ErrNoActor = errors.New("no actor in context")
-
 // Projects is the slice of project.Service the task domain needs: resolving a
-// project inside the actor's org, so a client-supplied projectId is validated
-// rather than trusted.
+// project inside the session's org, so a client-supplied projectId is
+// validated rather than trusted.
 type Projects interface {
-	GetByID(ctx context.Context, id, orgID uuid.UUID) (project.Project, error)
+	GetByID(ctx context.Context, id uuid.UUID) (project.Project, error)
 }
 
 type Service struct {
@@ -52,10 +47,6 @@ func NewService(repo Repository, projects Projects) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, title string) (Task, error) {
-	a, ok := actor.FromContext(ctx)
-	if !ok {
-		return Task{}, ErrNoActor
-	}
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return Task{}, &ValidationError{Msg: "title is required"}
@@ -63,7 +54,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, title string)
 	if utf8.RuneCountInString(title) > maxTitleLen {
 		return Task{}, &ValidationError{Msg: fmt.Sprintf("title exceeds %d characters", maxTitleLen)}
 	}
-	if _, err := s.projects.GetByID(ctx, projectID, a.OrgID); err != nil {
+	if _, err := s.projects.GetByID(ctx, projectID); err != nil {
 		if errors.Is(err, project.ErrNotFound) {
 			return Task{}, &ValidationError{Msg: "unknown project"}
 		}
@@ -92,7 +83,7 @@ type ListResult struct {
 func (s *Service) List(ctx context.Context, p ListParams) (ListResult, error) {
 	a, ok := actor.FromContext(ctx)
 	if !ok {
-		return ListResult{}, ErrNoActor
+		return ListResult{}, actor.ErrNoActor
 	}
 	if p.Status != nil && !p.Status.Valid() {
 		return ListResult{}, &ValidationError{Msg: fmt.Sprintf("unknown status %q", *p.Status)}

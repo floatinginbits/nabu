@@ -30,8 +30,8 @@ func (stubRepo) List(context.Context, task.ListFilter) ([]task.Task, error) { re
 // deliberately out of the way; api_test.go covers it against real rows.
 type stubProjects struct{}
 
-func (stubProjects) GetByID(_ context.Context, id, orgID uuid.UUID) (project.Project, error) {
-	return project.Project{ID: id, OrgID: orgID, Key: "GEN", Name: "General"}, nil
+func (stubProjects) GetByID(_ context.Context, id uuid.UUID) (project.Project, error) {
+	return project.Project{ID: id, OrgID: uuid.New(), Key: "GEN", Name: "General"}, nil
 }
 
 // newTestHandler builds the production handler with no database behind it.

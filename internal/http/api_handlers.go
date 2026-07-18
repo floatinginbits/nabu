@@ -6,15 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/floatinginbits/nabu/internal/actor"
 	"github.com/floatinginbits/nabu/internal/auth"
 	"github.com/floatinginbits/nabu/internal/http/api"
 	"github.com/floatinginbits/nabu/internal/project"
 	"github.com/floatinginbits/nabu/internal/task"
 	"github.com/floatinginbits/nabu/internal/user"
 )
-
-var errNoActor = errors.New("no actor in context")
 
 // apiServer implements the generated api.ServerInterface: parse the request,
 // call one service method, translate the result or error. No business logic.
@@ -76,19 +73,13 @@ func (s *apiServer) ListTasks(w http.ResponseWriter, r *http.Request, params api
 }
 
 func (s *apiServer) ListProjects(w http.ResponseWriter, r *http.Request) {
-	a, ok := actor.FromContext(r.Context())
-	if !ok {
-		// The route is behind requireAuth, so a missing actor is a wiring bug.
-		// project.Service takes the org as a parameter rather than reading the
-		// context itself, which is what puts this check here.
-		s.writeServiceError(w, r, errNoActor)
-		return
-	}
-	ps, err := s.projects.List(r.Context(), a.OrgID)
+	ps, err := s.projects.List(r.Context())
 	if err != nil {
 		s.writeServiceError(w, r, err)
 		return
 	}
+	// Projects are a bounded per-org collection, so the list is unpaginated;
+	// nextCursor stays null to keep the envelope uniform for the TS client.
 	out := api.ProjectList{Data: make([]api.Project, len(ps))}
 	for i, p := range ps {
 		out.Data[i] = api.Project{

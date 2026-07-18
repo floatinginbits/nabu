@@ -6,9 +6,17 @@ package actor
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 )
+
+// ErrNoActor means a scoped operation ran without a session actor in the
+// context. Every scoped route sits behind requireAuth, so this is a wiring
+// bug, not a client error — it surfaces as a 500, never as an unscoped query.
+// It lives here, in the leaf package, so every domain service reports the same
+// sentinel instead of defining its own.
+var ErrNoActor = errors.New("no actor in context")
 
 // Actor is the session-derived identity every scoped query and permission check
 // resolves against. OrgID comes from the server's own resolution of the session,

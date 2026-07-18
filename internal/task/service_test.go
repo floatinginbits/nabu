@@ -39,17 +39,22 @@ func (f *fakeRepo) List(_ context.Context, filter ListFilter) ([]Task, error) {
 
 // fakeProjects resolves exactly the projects seeded into it, and only inside
 // the org they belong to — the same "another org's project does not exist"
-// behavior the real service has.
+// behavior the real service has, including reading the org from the context
+// rather than a parameter.
 type fakeProjects struct {
 	orgID uuid.UUID
 	known map[uuid.UUID]bool
 }
 
-func (f *fakeProjects) GetByID(_ context.Context, id, orgID uuid.UUID) (project.Project, error) {
-	if orgID != f.orgID || !f.known[id] {
+func (f *fakeProjects) GetByID(ctx context.Context, id uuid.UUID) (project.Project, error) {
+	a, ok := actor.FromContext(ctx)
+	if !ok {
+		return project.Project{}, actor.ErrNoActor
+	}
+	if a.OrgID != f.orgID || !f.known[id] {
 		return project.Project{}, project.ErrNotFound
 	}
-	return project.Project{ID: id, OrgID: orgID, Key: "GEN", Name: "General"}, nil
+	return project.Project{ID: id, OrgID: a.OrgID, Key: "GEN", Name: "General"}, nil
 }
 
 // testScope is the org, project, and actor context a service test runs inside.
@@ -79,17 +84,18 @@ func newTestTask(createdAt time.Time) Task {
 // A context with no actor is a wiring bug, not client input: the service must
 // fail rather than fall through to a query scoped to the zero org, which would
 // silently return or write across every org. Asserted once, on both methods,
-// because every other case in this file supplies an actor.
+// because every other case in this file supplies an actor. Create surfaces it
+// from project resolution, which is what owns the org scope it needs.
 func TestServiceRejectsContextWithoutActor(t *testing.T) {
 	s := newTestScope()
 	repo := &fakeRepo{}
 	svc := s.service(repo)
 	bare := context.Background()
 
-	if _, err := svc.List(bare, ListParams{}); !errors.Is(err, ErrNoActor) {
+	if _, err := svc.List(bare, ListParams{}); !errors.Is(err, actor.ErrNoActor) {
 		t.Errorf("List() error = %v, want ErrNoActor", err)
 	}
-	if _, err := svc.Create(bare, s.projectID, "title"); !errors.Is(err, ErrNoActor) {
+	if _, err := svc.Create(bare, s.projectID, "title"); !errors.Is(err, actor.ErrNoActor) {
 		t.Errorf("Create() error = %v, want ErrNoActor", err)
 	}
 	// The failure must happen before any query: an unscoped call is the thing
